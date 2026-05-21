@@ -13,18 +13,31 @@ package hotkey
 static id gEventMonitor = nil;
 static id gKeyEventMonitor = nil;
 static id gLocalKeyEventMonitor = nil;
-static BOOL gModifierKeyDown = NO;
-static BOOL gEscapeEnabled = NO;
-static int gCurrentHotkeyType = 0; // 0=rightOption, 1=leftOption, 2=fn, 3=doubleRightOption
-static NSTimeInterval gLastRightOptionPress = 0;
+static BOOL gHotkeyKeyDown = NO;
+static BOOL gCancelKeyEnabled = NO;
+static UInt16 gCurrentHotkeyCode = 0x3D;  // Default: Right Option
+static UInt16 gCurrentCancelCode = 53;     // Default: Escape
+static BOOL gHotkeyIsModifier = YES;       // Is the hotkey a modifier key?
+static BOOL gCancelIsModifier = NO;        // Is the cancel key a modifier?
 
 extern void goHotkeyPressed(void);
-extern void goEscapePressed(void);
+extern void goCancelPressed(void);
 
-// Key codes
+// Common key codes
 #define kVK_RightOption 0x3D
 #define kVK_LeftOption 0x3A
+#define kVK_RightCommand 0x36
+#define kVK_LeftCommand 0x37
+#define kVK_RightShift 0x3C
+#define kVK_LeftShift 0x38
+#define kVK_RightControl 0x3E
+#define kVK_LeftControl 0x3B
 #define kVK_Function 0x3F
+#define kVK_CapsLock 0x39
+#define kVK_Escape 0x35
+#define kVK_Space 0x31
+#define kVK_Tab 0x30
+#define kVK_Return 0x24
 
 // Check if accessibility permissions are granted (with optional prompt)
 static int checkAccessibilityPermissionsWithPrompt(int shouldPrompt) {
@@ -46,151 +59,61 @@ static int requestAccessibilityPermissions(void) {
     NSLog(@"Requesting accessibility permissions...");
     int trusted = checkAccessibilityPermissionsWithPrompt(1);
     if (!trusted) {
-        NSLog(@"IMPORTANT: Please grant Accessibility permissions to enable Escape key and auto-paste features");
+        NSLog(@"IMPORTANT: Please grant Accessibility permissions to enable hotkey features");
         NSLog(@"Go to: System Preferences > Privacy & Security > Accessibility");
         NSLog(@"Add and enable this application");
     }
     return trusted;
 }
 
-static void startMonitoringWithType(int hotkeyType) {
+// Check if a key code is a modifier key
+static BOOL isModifierKeyCode(UInt16 keyCode) {
+    switch (keyCode) {
+        case kVK_RightOption:
+        case kVK_LeftOption:
+        case kVK_RightCommand:
+        case kVK_LeftCommand:
+        case kVK_RightShift:
+        case kVK_LeftShift:
+        case kVK_RightControl:
+        case kVK_LeftControl:
+        case kVK_Function:
+        case kVK_CapsLock:
+            return YES;
+        default:
+            return NO;
+    }
+}
+
+// Get the modifier flag for a modifier key code
+static NSEventModifierFlags getModifierFlag(UInt16 keyCode) {
+    switch (keyCode) {
+        case kVK_RightOption:
+        case kVK_LeftOption:
+            return NSEventModifierFlagOption;
+        case kVK_RightCommand:
+        case kVK_LeftCommand:
+            return NSEventModifierFlagCommand;
+        case kVK_RightShift:
+        case kVK_LeftShift:
+            return NSEventModifierFlagShift;
+        case kVK_RightControl:
+        case kVK_LeftControl:
+            return NSEventModifierFlagControl;
+        case kVK_Function:
+            return NSEventModifierFlagFunction;
+        case kVK_CapsLock:
+            return NSEventModifierFlagCapsLock;
+        default:
+            return 0;
+    }
+}
+
+static void stopAllMonitoring(void) {
     if (gEventMonitor != nil) {
         [NSEvent removeMonitor:gEventMonitor];
         gEventMonitor = nil;
     }
-    
-    gCurrentHotkeyType = hotkeyType;
-    gModifierKeyDown = NO;
-    gLastRightOptionPress = 0;
-    
-    // Check accessibility permissions first (no prompt - already requested at startup)
-    if (!hasAccessibilityPermissions()) {
-        NSLog(@"Cannot start monitoring without accessibility permissions");
-    }
-    
-    // Monitor for flagsChanged events (modifier keys)
-    gEventMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged
-        handler:^(NSEvent *event) {
-            UInt16 keyCode = [event keyCode];
-            NSEventModifierFlags flags = [event modifierFlags];
-            
-            switch (gCurrentHotkeyType) {
-                case 0: // rightOption
-                    if (keyCode == kVK_RightOption) {
-                        if (flags & NSEventModifierFlagOption) {
-                            if (!gModifierKeyDown) {
-                                gModifierKeyDown = YES;
-                                goHotkeyPressed();
-                            }
-                        } else {
-                            gModifierKeyDown = NO;
-                        }
-                    }
-                    break;
-                    
-                case 1: // leftOption
-                    if (keyCode == kVK_LeftOption) {
-                        if (flags & NSEventModifierFlagOption) {
-                            if (!gModifierKeyDown) {
-                                gModifierKeyDown = YES;
-                                goHotkeyPressed();
-                            }
-                        } else {
-                            gModifierKeyDown = NO;
-                        }
-                    }
-                    break;
-                    
-                case 2: // fn
-                    if (keyCode == kVK_Function) {
-                        if (flags & NSEventModifierFlagFunction) {
-                            if (!gModifierKeyDown) {
-                                gModifierKeyDown = YES;
-                                goHotkeyPressed();
-                            }
-                        } else {
-                            gModifierKeyDown = NO;
-                        }
-                    }
-                    break;
-                    
-                case 3: // doubleRightOption (double tap)
-                    if (keyCode == kVK_RightOption) {
-                        if (flags & NSEventModifierFlagOption) {
-                            NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
-                            if (now - gLastRightOptionPress < 0.4) { // 400ms window for double tap
-                                goHotkeyPressed();
-                                gLastRightOptionPress = 0; // Reset to prevent triple-tap
-                            } else {
-                                gLastRightOptionPress = now;
-                            }
-                        }
-                    }
-                    break;
-            }
-        }];
-    
-    NSString *hotkeyName;
-    switch (hotkeyType) {
-        case 0: hotkeyName = @"Right Option"; break;
-        case 1: hotkeyName = @"Left Option"; break;
-        case 2: hotkeyName = @"Fn"; break;
-        case 3: hotkeyName = @"Double-tap Right Option"; break;
-        default: hotkeyName = @"Unknown"; break;
-    }
-    NSLog(@"%@ key monitoring started", hotkeyName);
-}
-
-static void startMonitoring(void) {
-    startMonitoringWithType(0); // Default to right option
-}
-
-static void stopMonitoring(void) {
-    if (gEventMonitor != nil) {
-        [NSEvent removeMonitor:gEventMonitor];
-        gEventMonitor = nil;
-        gModifierKeyDown = NO;
-    }
-}
-
-static void startEscapeMonitoring(void) {
-    gEscapeEnabled = YES;  // Always enable first, even if monitors already exist
-    
-    // Check accessibility permissions (no prompt - already requested at startup)
-    if (!hasAccessibilityPermissions()) {
-        NSLog(@"WARNING: Cannot monitor escape key without accessibility permissions!");
-    }
-    
-    if (gKeyEventMonitor != nil) {
-        NSLog(@"Escape key monitoring re-enabled (monitors already exist)");
-        return;
-    }
-    
-    NSLog(@"Starting escape key monitoring - creating new monitors");
-    
-    // Global monitor for when other apps have focus
-    gKeyEventMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskKeyDown
-        handler:^(NSEvent *event) {
-            if (gEscapeEnabled && [event keyCode] == 53) { // 53 = Escape
-                NSLog(@"Escape key pressed (global)");
-                goEscapePressed();
-            }
-        }];
-    
-    // Local monitor for when this app has focus
-    gLocalKeyEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
-        handler:^NSEvent *(NSEvent *event) {
-            if (gEscapeEnabled && [event keyCode] == 53) { // 53 = Escape
-                NSLog(@"Escape key pressed (local)");
-                goEscapePressed();
-                return nil; // Consume event
-            }
-            return event;
-        }];
-}
-
-static void stopEscapeMonitoring(void) {
-    gEscapeEnabled = NO;
     if (gKeyEventMonitor != nil) {
         [NSEvent removeMonitor:gKeyEventMonitor];
         gKeyEventMonitor = nil;
@@ -199,22 +122,123 @@ static void stopEscapeMonitoring(void) {
         [NSEvent removeMonitor:gLocalKeyEventMonitor];
         gLocalKeyEventMonitor = nil;
     }
-    NSLog(@"Escape key monitoring stopped");
+    gHotkeyKeyDown = NO;
+    gCancelKeyEnabled = NO;
+}
+
+static void startMonitoring(void) {
+    stopAllMonitoring();
+    
+    // Check accessibility permissions first
+    if (!hasAccessibilityPermissions()) {
+        NSLog(@"Cannot start monitoring without accessibility permissions");
+        return;
+    }
+    
+    // Monitor for modifier keys (flagsChanged events)
+    gEventMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged
+        handler:^(NSEvent *event) {
+            UInt16 keyCode = [event keyCode];
+            NSEventModifierFlags flags = [event modifierFlags];
+            
+            // Check hotkey (if it's a modifier)
+            if (gHotkeyIsModifier && keyCode == gCurrentHotkeyCode) {
+                NSEventModifierFlags modFlag = getModifierFlag(keyCode);
+                if (flags & modFlag) {
+                    if (!gHotkeyKeyDown) {
+                        gHotkeyKeyDown = YES;
+                        goHotkeyPressed();
+                    }
+                } else {
+                    gHotkeyKeyDown = NO;
+                }
+            }
+            
+            // Check cancel key (if it's a modifier)
+            if (gCancelKeyEnabled && gCancelIsModifier && keyCode == gCurrentCancelCode) {
+                NSEventModifierFlags modFlag = getModifierFlag(keyCode);
+                if (flags & modFlag) {
+                    goCancelPressed();
+                }
+            }
+        }];
+    
+    // Monitor for regular keys (keyDown events)
+    gKeyEventMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+        handler:^(NSEvent *event) {
+            UInt16 keyCode = [event keyCode];
+            
+            // Check hotkey (if it's NOT a modifier)
+            if (!gHotkeyIsModifier && keyCode == gCurrentHotkeyCode) {
+                goHotkeyPressed();
+            }
+            
+            // Check cancel key (if it's NOT a modifier)
+            if (gCancelKeyEnabled && !gCancelIsModifier && keyCode == gCurrentCancelCode) {
+                goCancelPressed();
+            }
+        }];
+    
+    // Local monitor for when this app has focus
+    gLocalKeyEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+        handler:^NSEvent *(NSEvent *event) {
+            UInt16 keyCode = [event keyCode];
+            
+            // Check hotkey (if it's NOT a modifier)
+            if (!gHotkeyIsModifier && keyCode == gCurrentHotkeyCode) {
+                goHotkeyPressed();
+                return nil; // Consume event
+            }
+            
+            // Check cancel key (if it's NOT a modifier)
+            if (gCancelKeyEnabled && !gCancelIsModifier && keyCode == gCurrentCancelCode) {
+                goCancelPressed();
+                return nil; // Consume event
+            }
+            
+            return event;
+        }];
+    
+    NSLog(@"Key monitoring started - hotkey: %d, cancel: %d", gCurrentHotkeyCode, gCurrentCancelCode);
+}
+
+static void setHotkeyCode(UInt16 keyCode) {
+    gCurrentHotkeyCode = keyCode;
+    gHotkeyIsModifier = isModifierKeyCode(keyCode);
+    gHotkeyKeyDown = NO;
+    NSLog(@"Hotkey set to keyCode: %d (isModifier: %d)", keyCode, gHotkeyIsModifier);
+}
+
+static void setCancelCode(UInt16 keyCode) {
+    gCurrentCancelCode = keyCode;
+    gCancelIsModifier = isModifierKeyCode(keyCode);
+    NSLog(@"Cancel key set to keyCode: %d (isModifier: %d)", keyCode, gCancelIsModifier);
+}
+
+static void enableCancelKey(void) {
+    gCancelKeyEnabled = YES;
+    NSLog(@"Cancel key enabled");
+}
+
+static void disableCancelKey(void) {
+    gCancelKeyEnabled = NO;
+    NSLog(@"Cancel key disabled");
 }
 */
 import "C"
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 )
 
 var (
 	callbackMu       sync.Mutex
-	callback         func()
+	hotkeyCallback   func()
 	hotkeyC          = make(chan struct{}, 1)
-	escapeCallbackMu sync.Mutex
-	escapeCallback   func()
+	cancelCallbackMu sync.Mutex
+	cancelCallback   func()
 )
 
 //export goHotkeyPressed
@@ -226,17 +250,13 @@ func goHotkeyPressed() {
 	}
 }
 
-//export goEscapePressed
-func goEscapePressed() {
-	fmt.Println("DEBUG: goEscapePressed called from native code")
-	escapeCallbackMu.Lock()
-	cb := escapeCallback
-	escapeCallbackMu.Unlock()
+//export goCancelPressed
+func goCancelPressed() {
+	cancelCallbackMu.Lock()
+	cb := cancelCallback
+	cancelCallbackMu.Unlock()
 	if cb != nil {
-		fmt.Println("DEBUG: Escape callback exists, calling it")
 		go cb()
-	} else {
-		fmt.Println("DEBUG: WARNING - Escape callback is nil!")
 	}
 }
 
@@ -245,17 +265,22 @@ type Callback func()
 
 // Manager handles global hotkey registration
 type Manager struct {
-	mu      sync.Mutex
-	running bool
-	stopC   chan struct{}
+	mu         sync.Mutex
+	running    bool
+	stopC      chan struct{}
+	hotkeyStr  string
+	cancelStr  string
 }
 
 // NewManager creates a new hotkey manager
 func NewManager() *Manager {
-	return &Manager{}
+	return &Manager{
+		hotkeyStr: "rightoption",
+		cancelStr: "escape",
+	}
 }
 
-// Register registers the global hotkey (Right Option key)
+// Register registers the global hotkey
 func (m *Manager) Register(cb Callback) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -265,8 +290,16 @@ func (m *Manager) Register(cb Callback) error {
 	}
 
 	callbackMu.Lock()
-	callback = cb
+	hotkeyCallback = cb
 	callbackMu.Unlock()
+
+	// Set the hotkey code
+	keyCode := KeyNameToCode(m.hotkeyStr)
+	C.setHotkeyCode(C.UInt16(keyCode))
+	
+	// Set the cancel key code
+	cancelCode := KeyNameToCode(m.cancelStr)
+	C.setCancelCode(C.UInt16(cancelCode))
 
 	C.startMonitoring()
 
@@ -279,7 +312,7 @@ func (m *Manager) Register(cb Callback) error {
 			select {
 			case <-hotkeyC:
 				callbackMu.Lock()
-				cb := callback
+				cb := hotkeyCallback
 				callbackMu.Unlock()
 				if cb != nil {
 					cb()
@@ -303,41 +336,38 @@ func (m *Manager) Unregister() error {
 	}
 
 	close(m.stopC)
-	C.stopMonitoring()
+	C.stopAllMonitoring()
 	m.running = false
 
 	return nil
 }
 
-// SetHotkeyType changes the hotkey type
-// Types: "rightOption", "leftOption", "fn", "doubleRightOption"
-func (m *Manager) SetHotkeyType(hotkeyType string) {
-	var typeInt C.int
-	switch hotkeyType {
-	case "leftOption":
-		typeInt = 1
-	case "fn":
-		typeInt = 2
-	case "doubleRightOption":
-		typeInt = 3
-	default: // "rightOption"
-		typeInt = 0
+// SetHotkeyType sets the recording hotkey by name
+func (m *Manager) SetHotkeyType(hotkeyName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	m.hotkeyStr = strings.ToLower(hotkeyName)
+	keyCode := KeyNameToCode(m.hotkeyStr)
+	C.setHotkeyCode(C.UInt16(keyCode))
+	
+	if m.running {
+		C.startMonitoring()
 	}
-	C.startMonitoringWithType(typeInt)
+	
+	fmt.Printf("Hotkey set to: %s (code: %d)\n", m.hotkeyStr, keyCode)
 }
 
-// GetHotkeyDisplayName returns the display name for a hotkey type
-func GetHotkeyDisplayName(hotkeyType string) string {
-	switch hotkeyType {
-	case "leftOption":
-		return "Left Option (⌥)"
-	case "fn":
-		return "Fn"
-	case "doubleRightOption":
-		return "Double-tap Right Option"
-	default:
-		return "Right Option (⌥)"
-	}
+// SetCancelKey sets the cancel hotkey by name
+func (m *Manager) SetCancelKey(keyName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	m.cancelStr = strings.ToLower(keyName)
+	cancelCode := KeyNameToCode(m.cancelStr)
+	C.setCancelCode(C.UInt16(cancelCode))
+	
+	fmt.Printf("Cancel key set to: %s (code: %d)\n", m.cancelStr, cancelCode)
 }
 
 // IsRegistered returns whether hotkey is registered
@@ -347,33 +377,234 @@ func (m *Manager) IsRegistered() bool {
 	return m.running
 }
 
-// EnableEscapeCancel starts monitoring for Escape key to cancel recording
-func (m *Manager) EnableEscapeCancel(cb func()) {
-	fmt.Println("EnableEscapeCancel: setting callback")
-	escapeCallbackMu.Lock()
-	escapeCallback = cb
-	escapeCallbackMu.Unlock()
+// EnableCancelKey starts monitoring for the cancel key
+func (m *Manager) EnableCancelKey(cb func()) {
+	cancelCallbackMu.Lock()
+	cancelCallback = cb
+	cancelCallbackMu.Unlock()
 	
-	fmt.Println("EnableEscapeCancel: calling C.startEscapeMonitoring()")
-	C.startEscapeMonitoring()
-	fmt.Println("EnableEscapeCancel: done")
+	C.enableCancelKey()
 }
 
-// DisableEscapeCancel stops monitoring for Escape key
-func (m *Manager) DisableEscapeCancel() {
-	C.stopEscapeMonitoring()
-	escapeCallbackMu.Lock()
-	escapeCallback = nil
-	escapeCallbackMu.Unlock()
+// DisableCancelKey stops monitoring for the cancel key
+func (m *Manager) DisableCancelKey() {
+	C.disableCancelKey()
+	
+	cancelCallbackMu.Lock()
+	cancelCallback = nil
+	cancelCallbackMu.Unlock()
+}
+
+// GetHotkeyDisplayName returns the display name for a hotkey
+func GetHotkeyDisplayName(hotkeyName string) string {
+	return KeyNameToDisplayName(hotkeyName)
 }
 
 // RequestAccessibilityPermissions prompts user for accessibility permissions
-// Returns true if permissions are granted
 func RequestAccessibilityPermissions() bool {
 	return C.requestAccessibilityPermissions() != 0
 }
 
-// HasAccessibilityPermissions checks if accessibility permissions are granted without prompting
-func HasAccessibilityPermissions() bool {
-	return C.checkAccessibilityPermissionsWithPrompt(0) != 0
+// KeyNameToCode converts a key name to a macOS key code
+func KeyNameToCode(name string) uint16 {
+	switch strings.ToLower(name) {
+	// Modifier keys
+	case "rightoption", "rightalt":
+		return 0x3D
+	case "leftoption", "leftalt":
+		return 0x3A
+	case "rightcommand", "rightcmd":
+		return 0x36
+	case "leftcommand", "leftcmd":
+		return 0x37
+	case "rightshift":
+		return 0x3C
+	case "leftshift":
+		return 0x38
+	case "rightcontrol", "rightctrl":
+		return 0x3E
+	case "leftcontrol", "leftctrl":
+		return 0x3B
+	case "fn", "function":
+		return 0x3F
+	case "capslock":
+		return 0x39
+	
+	// Special keys
+	case "escape", "esc":
+		return 0x35
+	case "space":
+		return 0x31
+	case "tab":
+		return 0x30
+	case "return", "enter":
+		return 0x24
+	case "delete", "backspace":
+		return 0x33
+	case "forwarddelete":
+		return 0x75
+	
+	// Arrow keys
+	case "left", "arrowleft":
+		return 0x7B
+	case "right", "arrowright":
+		return 0x7C
+	case "up", "arrowup":
+		return 0x7E
+	case "down", "arrowdown":
+		return 0x7D
+	
+	// Function keys
+	case "f1":
+		return 0x7A
+	case "f2":
+		return 0x78
+	case "f3":
+		return 0x63
+	case "f4":
+		return 0x76
+	case "f5":
+		return 0x60
+	case "f6":
+		return 0x61
+	case "f7":
+		return 0x62
+	case "f8":
+		return 0x64
+	case "f9":
+		return 0x65
+	case "f10":
+		return 0x6D
+	case "f11":
+		return 0x67
+	case "f12":
+		return 0x6F
+	
+	// Letter keys
+	case "a":
+		return 0x00
+	case "b":
+		return 0x0B
+	case "c":
+		return 0x08
+	case "d":
+		return 0x02
+	case "e":
+		return 0x0E
+	case "f":
+		return 0x03
+	case "g":
+		return 0x05
+	case "h":
+		return 0x04
+	case "i":
+		return 0x22
+	case "j":
+		return 0x26
+	case "k":
+		return 0x28
+	case "l":
+		return 0x25
+	case "m":
+		return 0x2E
+	case "n":
+		return 0x2D
+	case "o":
+		return 0x1F
+	case "p":
+		return 0x23
+	case "q":
+		return 0x0C
+	case "r":
+		return 0x0F
+	case "s":
+		return 0x01
+	case "t":
+		return 0x11
+	case "u":
+		return 0x20
+	case "v":
+		return 0x09
+	case "w":
+		return 0x0D
+	case "x":
+		return 0x07
+	case "y":
+		return 0x10
+	case "z":
+		return 0x06
+	
+	// Number keys
+	case "0":
+		return 0x1D
+	case "1":
+		return 0x12
+	case "2":
+		return 0x13
+	case "3":
+		return 0x14
+	case "4":
+		return 0x15
+	case "5":
+		return 0x17
+	case "6":
+		return 0x16
+	case "7":
+		return 0x1A
+	case "8":
+		return 0x1C
+	case "9":
+		return 0x19
+	
+	default:
+		return 0x3D // Default to right option
+	}
+}
+
+// KeyNameToDisplayName converts a key name to a display-friendly name
+func KeyNameToDisplayName(name string) string {
+	switch strings.ToLower(name) {
+	case "rightoption", "rightalt":
+		return "Right Option (⌥)"
+	case "leftoption", "leftalt":
+		return "Left Option (⌥)"
+	case "rightcommand", "rightcmd":
+		return "Right Command (⌘)"
+	case "leftcommand", "leftcmd":
+		return "Left Command (⌘)"
+	case "rightshift":
+		return "Right Shift (⇧)"
+	case "leftshift":
+		return "Left Shift (⇧)"
+	case "rightcontrol", "rightctrl":
+		return "Right Control (⌃)"
+	case "leftcontrol", "leftctrl":
+		return "Left Control (⌃)"
+	case "fn", "function":
+		return "Fn"
+	case "capslock":
+		return "Caps Lock"
+	case "escape", "esc":
+		return "Escape"
+	case "space":
+		return "Space"
+	case "tab":
+		return "Tab"
+	case "return", "enter":
+		return "Return"
+	case "delete", "backspace":
+		return "Delete"
+	case "left", "arrowleft":
+		return "←"
+	case "right", "arrowright":
+		return "→"
+	case "up", "arrowup":
+		return "↑"
+	case "down", "arrowdown":
+		return "↓"
+	case "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12":
+		return strings.ToUpper(name)
+	default:
+		return strings.ToUpper(name)
+	}
 }

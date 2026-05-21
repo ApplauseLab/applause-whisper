@@ -27,6 +27,9 @@ import {
   GetStats,
   GetRecordingHotkey,
   SetRecordingHotkey,
+  GetCancelHotkey,
+  SetCancelHotkey,
+  GetPlatform,
   Quit,
   IsOnboardingCompleted,
 } from '../wailsjs/go/main/App';
@@ -123,14 +126,21 @@ function App() {
     totalRecordings: 0,
     totalWords: 0,
   });
-  const [currentHotkey, setCurrentHotkey] = useState<string>('rightOption');
+  const [currentHotkey, setCurrentHotkey] = useState<string>('rightoption');
+  const [cancelHotkey, setCancelHotkey] = useState<string>('escape');
   const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null);
+  const [platform, setPlatform] = useState<string>('darwin');
+  const [isCapturingHotkey, setIsCapturingHotkey] = useState<boolean>(false);
+  const [isCapturingCancelKey, setIsCapturingCancelKey] = useState<boolean>(false);
+  const hotkeyInputRef = useRef<HTMLDivElement>(null);
+  const cancelKeyInputRef = useRef<HTMLDivElement>(null);
 
-  // Check if onboarding is needed on mount
+  // Check if onboarding is needed on mount and get platform
   useEffect(() => {
     IsOnboardingCompleted().then((completed: boolean) => {
       setShowOnboarding(!completed);
     });
+    GetPlatform().then((p: string) => setPlatform(p));
   }, []);
 
   useEffect(() => {
@@ -145,6 +155,7 @@ function App() {
     GetAudioInputDevices().then((devices: AudioInputDevice[]) => setAudioDevices(devices));
     GetStats().then((s: UsageStats) => setStats(s));
     GetRecordingHotkey().then((h: string) => setCurrentHotkey(h));
+    GetCancelHotkey().then((h: string) => setCancelHotkey(h));
 
     LogInfo('Setting up EventsOn for stateChanged');
     const cleanup = EventsOn('stateChanged', (state: AppState) => {
@@ -339,17 +350,169 @@ function App() {
     await SetAudioInputDevice(deviceName);
   }, []);
 
-  const handleHotkeyChange = useCallback(async (hotkeyType: string) => {
-    setCurrentHotkey(hotkeyType);
-    await SetRecordingHotkey(hotkeyType);
+  const handleHotkeyChange = useCallback(async (keyName: string) => {
+    setCurrentHotkey(keyName);
+    try {
+      await SetRecordingHotkey(keyName);
+    } catch (error) {
+      console.error('Failed to set hotkey:', error);
+    }
   }, []);
 
-  const getHotkeyDisplayName = (hotkeyType: string): string => {
-    switch (hotkeyType) {
-      case 'leftOption': return 'Left Option (⌥)';
-      case 'fn': return 'Fn';
-      case 'doubleRightOption': return 'Double-tap Right Option';
-      default: return 'Right Option (⌥)';
+  const handleCancelKeyChange = useCallback(async (keyName: string) => {
+    setCancelHotkey(keyName);
+    try {
+      await SetCancelHotkey(keyName);
+    } catch (error) {
+      console.error('Failed to set cancel key:', error);
+    }
+  }, []);
+
+  // Map a keyboard event to a key name
+  const mapKeyEventToKeyName = useCallback((e: React.KeyboardEvent<HTMLDivElement>): string | null => {
+    const key = e.key;
+    const code = e.code;
+    
+    // Map modifier keys by their location
+    if (key === 'Alt') {
+      return code === 'AltRight' ? (platform === 'darwin' ? 'rightoption' : 'rightalt') 
+                                 : (platform === 'darwin' ? 'leftoption' : 'leftalt');
+    }
+    if (key === 'Control') {
+      return code === 'ControlRight' ? 'rightctrl' : 'leftctrl';
+    }
+    if (key === 'Shift') {
+      return code === 'ShiftRight' ? 'rightshift' : 'leftshift';
+    }
+    if (key === 'Meta') {
+      return code === 'MetaRight' ? (platform === 'darwin' ? 'rightcommand' : 'rightwin')
+                                  : (platform === 'darwin' ? 'leftcommand' : 'leftwin');
+    }
+    if (key === 'CapsLock') return 'capslock';
+    if (key === 'Fn' || code === 'Fn') return 'fn';
+    
+    // Map special keys
+    if (key === 'Escape') return 'escape';
+    if (key === ' ') return 'space';
+    if (key === 'Tab') return 'tab';
+    if (key === 'Enter') return 'return';
+    if (key === 'Backspace') return 'backspace';
+    if (key === 'Delete') return 'delete';
+    if (key === 'ArrowLeft') return 'left';
+    if (key === 'ArrowRight') return 'right';
+    if (key === 'ArrowUp') return 'up';
+    if (key === 'ArrowDown') return 'down';
+    
+    // Function keys
+    if (key.match(/^F\d+$/)) return key.toLowerCase();
+    
+    // Letter and number keys
+    if (key.length === 1 && key.match(/[a-zA-Z0-9]/)) {
+      return key.toLowerCase();
+    }
+    
+    return null;
+  }, [platform]);
+
+  // Handle hotkey capture from key press
+  const handleHotkeyCapture = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!isCapturingHotkey) return;
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const keyName = mapKeyEventToKeyName(e);
+    if (keyName) {
+      handleHotkeyChange(keyName);
+      setIsCapturingHotkey(false);
+    }
+  }, [isCapturingHotkey, mapKeyEventToKeyName, handleHotkeyChange]);
+
+  // Handle cancel key capture from key press
+  const handleCancelKeyCapture = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!isCapturingCancelKey) return;
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const keyName = mapKeyEventToKeyName(e);
+    if (keyName) {
+      handleCancelKeyChange(keyName);
+      setIsCapturingCancelKey(false);
+    }
+  }, [isCapturingCancelKey, mapKeyEventToKeyName, handleCancelKeyChange]);
+
+  // Click outside to cancel capture
+  useEffect(() => {
+    if (!isCapturingHotkey && !isCapturingCancelKey) return;
+    
+    const handleClickOutside = (e: MouseEvent) => {
+      if (isCapturingHotkey && hotkeyInputRef.current && !hotkeyInputRef.current.contains(e.target as Node)) {
+        setIsCapturingHotkey(false);
+      }
+      if (isCapturingCancelKey && cancelKeyInputRef.current && !cancelKeyInputRef.current.contains(e.target as Node)) {
+        setIsCapturingCancelKey(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isCapturingHotkey, isCapturingCancelKey]);
+
+  // Format key name for display
+  const formatKeyDisplay = (keyName: string): string => {
+    const k = keyName.toLowerCase();
+    switch (k) {
+      case 'rightoption': case 'rightalt': return platform === 'darwin' ? 'Right ⌥' : 'Right Alt';
+      case 'leftoption': case 'leftalt': return platform === 'darwin' ? 'Left ⌥' : 'Left Alt';
+      case 'rightcommand': case 'rightcmd': return platform === 'darwin' ? 'Right ⌘' : 'Right Win';
+      case 'leftcommand': case 'leftcmd': return platform === 'darwin' ? 'Left ⌘' : 'Left Win';
+      case 'rightctrl': case 'rightcontrol': return 'Right Ctrl';
+      case 'leftctrl': case 'leftcontrol': return 'Left Ctrl';
+      case 'rightshift': return 'Right Shift';
+      case 'leftshift': return 'Left Shift';
+      case 'rightwin': case 'rightsuper': return 'Right Win';
+      case 'leftwin': case 'leftsuper': return 'Left Win';
+      case 'capslock': return 'Caps Lock';
+      case 'fn': case 'function': return 'Fn';
+      case 'escape': case 'esc': return 'Escape';
+      case 'space': return 'Space';
+      case 'tab': return 'Tab';
+      case 'return': case 'enter': return 'Return';
+      case 'backspace': return 'Backspace';
+      case 'delete': return 'Delete';
+      case 'left': case 'arrowleft': return '←';
+      case 'right': case 'arrowright': return '→';
+      case 'up': case 'arrowup': return '↑';
+      case 'down': case 'arrowdown': return '↓';
+      default:
+        if (k.match(/^f\d+$/)) return k.toUpperCase();
+        return k.toUpperCase();
+    }
+  };
+
+  // Get simple hotkey display for keyboard shortcut badge
+  const getHotkeyShortDisplay = (keyName: string): string => {
+    const k = keyName.toLowerCase();
+    switch (k) {
+      case 'rightoption': case 'leftoption': case 'rightalt': case 'leftalt': return '⌥';
+      case 'rightcommand': case 'leftcommand': case 'rightcmd': case 'leftcmd': return '⌘';
+      case 'rightctrl': case 'leftctrl': case 'rightcontrol': case 'leftcontrol': return '⌃';
+      case 'rightshift': case 'leftshift': return '⇧';
+      case 'rightwin': case 'leftwin': case 'rightsuper': case 'leftsuper': return '⊞';
+      case 'capslock': return '⇪';
+      case 'fn': case 'function': return 'Fn';
+      case 'escape': case 'esc': return 'Esc';
+      case 'space': return '␣';
+      case 'tab': return '⇥';
+      case 'return': case 'enter': return '↵';
+      case 'backspace': return '⌫';
+      case 'delete': return '⌦';
+      case 'left': case 'arrowleft': return '←';
+      case 'right': case 'arrowright': return '→';
+      case 'up': case 'arrowup': return '↑';
+      case 'down': case 'arrowdown': return '↓';
+      default: return k.toUpperCase();
     }
   };
 
@@ -511,7 +674,7 @@ function App() {
                     <span className="action-title">Start recording</span>
                     <span className="action-desc">Turn your voice to text with a single click</span>
                   </div>
-                  <kbd className="action-shortcut">Right ⌥</kbd>
+                  <kbd className="action-shortcut">{getHotkeyShortDisplay(currentHotkey)}</kbd>
                 </div>
 
                 <div className="action-item" onClick={() => setCurrentPage('settings')}>
@@ -704,27 +867,53 @@ function App() {
             </section>
 
             <section className="settings-section">
-              <h2>Keyboard Shortcut</h2>
+              <h2>Keyboard Shortcuts</h2>
               
               <div className="setting-row">
                 <div className="setting-info">
-                  <label>Recording Hotkey</label>
+                  <label>Recording Key</label>
                   <p>Press this key to start/stop recording</p>
                 </div>
-                <select 
-                  value={currentHotkey}
-                  onChange={(e) => handleHotkeyChange(e.target.value)}
+                <div
+                  ref={hotkeyInputRef}
+                  className={`hotkey-capture ${isCapturingHotkey ? 'capturing' : ''}`}
+                  tabIndex={0}
+                  onClick={() => setIsCapturingHotkey(true)}
+                  onKeyDown={handleHotkeyCapture}
+                  onBlur={() => setIsCapturingHotkey(false)}
                 >
-                  <option value="rightOption">Right Option (⌥)</option>
-                  <option value="leftOption">Left Option (⌥)</option>
-                  <option value="fn">Fn</option>
-                  <option value="doubleRightOption">Double-tap Right Option</option>
-                </select>
+                  {isCapturingHotkey ? (
+                    <span className="capture-prompt">Press any key...</span>
+                  ) : (
+                    <span className="hotkey-display">{formatKeyDisplay(currentHotkey)}</span>
+                  )}
+                </div>
+              </div>
+              
+              <div className="setting-row">
+                <div className="setting-info">
+                  <label>Cancel Key</label>
+                  <p>Press this key to cancel recording</p>
+                </div>
+                <div
+                  ref={cancelKeyInputRef}
+                  className={`hotkey-capture ${isCapturingCancelKey ? 'capturing' : ''}`}
+                  tabIndex={0}
+                  onClick={() => setIsCapturingCancelKey(true)}
+                  onKeyDown={handleCancelKeyCapture}
+                  onBlur={() => setIsCapturingCancelKey(false)}
+                >
+                  {isCapturingCancelKey ? (
+                    <span className="capture-prompt">Press any key...</span>
+                  ) : (
+                    <span className="hotkey-display">{formatKeyDisplay(cancelHotkey)}</span>
+                  )}
+                </div>
               </div>
               
               <div className="hotkey-status">
                 <span className={`status ${appState.hotkeyEnabled ? 'active' : ''}`}>
-                  {appState.hotkeyEnabled ? 'Hotkey Active' : 'Hotkey Not Registered'}
+                  {appState.hotkeyEnabled ? 'Hotkeys Active' : 'Hotkeys Not Registered'}
                 </span>
               </div>
             </section>

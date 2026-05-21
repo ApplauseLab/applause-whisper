@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // Config holds application settings
@@ -26,12 +27,13 @@ type Config struct {
 	// Show notification after transcription
 	ShowNotification bool `json:"showNotification"`
 
-	// Hotkey configuration (legacy - kept for compatibility)
-	HotkeyModifiers []string `json:"hotkeyModifiers"` // e.g., ["cmd", "shift"]
-	HotkeyKey       string   `json:"hotkeyKey"`       // e.g., "space"
-
-	// Recording hotkey type: "rightOption", "leftOption", "fn", "doubleRightOption"
+	// Recording hotkey - any single key name, e.g., "rightoption", "f9", "space"
+	// macOS default: "rightoption"
+	// Windows/Linux default: "rightalt"
 	RecordingHotkey string `json:"recordingHotkey"`
+
+	// Cancel hotkey - key to cancel recording, default: "escape"
+	CancelHotkey string `json:"cancelHotkey"`
 
 	// Sound enabled for recording start/stop
 	SoundEnabled *bool `json:"soundEnabled,omitempty"`
@@ -48,10 +50,21 @@ func DefaultConfig() *Config {
 		Model:            "base.en",
 		AutoPaste:        true,
 		ShowNotification: true,
-		HotkeyModifiers:  []string{"cmd", "shift"},
-		HotkeyKey:        "space",
-		RecordingHotkey:  "rightOption",
+		RecordingHotkey:  DefaultRecordingHotkey(),
+		CancelHotkey:     "escape",
 		SoundEnabled:     &soundEnabled,
+	}
+}
+
+// DefaultRecordingHotkey returns the default recording hotkey for the current platform
+func DefaultRecordingHotkey() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "rightoption"
+	case "windows", "linux":
+		return "rightalt"
+	default:
+		return "rightalt"
 	}
 }
 
@@ -171,6 +184,12 @@ func (cm *ConfigManager) SetAudioInputDevice(deviceName string) error {
 // SetRecordingHotkey updates the recording hotkey setting
 func (cm *ConfigManager) SetRecordingHotkey(hotkey string) error {
 	cm.config.RecordingHotkey = hotkey
+	return cm.Save()
+}
+
+// SetCancelHotkey updates the cancel hotkey setting
+func (cm *ConfigManager) SetCancelHotkey(hotkey string) error {
+	cm.config.CancelHotkey = hotkey
 	return cm.Save()
 }
 

@@ -116,9 +116,8 @@ export namespace models {
 	    audioInputDevice?: string;
 	    autoPaste: boolean;
 	    showNotification: boolean;
-	    hotkeyModifiers: string[];
-	    hotkeyKey: string;
 	    recordingHotkey: string;
+	    cancelHotkey: string;
 	    soundEnabled?: boolean;
 	    onboardingCompleted: boolean;
 	
@@ -134,9 +133,8 @@ export namespace models {
 	        this.audioInputDevice = source["audioInputDevice"];
 	        this.autoPaste = source["autoPaste"];
 	        this.showNotification = source["showNotification"];
-	        this.hotkeyModifiers = source["hotkeyModifiers"];
-	        this.hotkeyKey = source["hotkeyKey"];
 	        this.recordingHotkey = source["recordingHotkey"];
+	        this.cancelHotkey = source["cancelHotkey"];
 	        this.soundEnabled = source["soundEnabled"];
 	        this.onboardingCompleted = source["onboardingCompleted"];
 	    }

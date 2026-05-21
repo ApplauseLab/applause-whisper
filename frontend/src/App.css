@@ -337,9 +337,8 @@ body {
 /* Download progress card */
 .download-progress {
   text-align: center;
-  width: 100%;
-  max-width: 340px;
   padding: 28px 32px;
+  margin: 0 20px 20px;
   background: var(--bg-card);
   border-radius: 16px;
   border: 1px solid var(--border);
@@ -779,6 +778,57 @@ body {
 .setting-row select:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+/* Hotkey capture input */
+.hotkey-capture {
+  padding: 10px 16px;
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  min-width: 180px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  text-align: center;
+}
+
+.hotkey-capture:hover {
+  border-color: var(--text-secondary);
+}
+
+.hotkey-capture:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.hotkey-capture.capturing {
+  border-color: var(--accent);
+  background: rgba(168, 255, 96, 0.1);
+  animation: pulse-border 1.5s ease-in-out infinite;
+}
+
+.hotkey-capture .capture-prompt {
+  color: var(--accent);
+  font-style: italic;
+}
+
+.hotkey-capture .hotkey-display {
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+@keyframes pulse-border {
+  0%, 100% {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 0 rgba(168, 255, 96, 0.4);
+  }
+  50% {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px rgba(168, 255, 96, 0.1);
+  }
 }
 
 .api-key-input {

@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -180,6 +182,20 @@ func (a *App) startup(ctx context.Context) {
 		fmt.Println("Accessibility permissions granted")
 	}
 
+	// Apply configured hotkey type before registering
+	hotkeyType := configManager.Get().RecordingHotkey
+	if hotkeyType == "" {
+		hotkeyType = models.DefaultRecordingHotkey()
+	}
+	a.hotkeyManager.SetHotkeyType(hotkeyType)
+	
+	// Apply configured cancel key
+	cancelKey := configManager.Get().CancelHotkey
+	if cancelKey == "" {
+		cancelKey = "escape"
+	}
+	a.hotkeyManager.SetCancelKey(cancelKey)
+	
 	// Register global hotkey
 	if err := a.hotkeyManager.Register(func() {
 		a.ToggleRecording()
@@ -187,12 +203,6 @@ func (a *App) startup(ctx context.Context) {
 		fmt.Printf("Warning: Failed to register hotkey: %v\n", err)
 	} else {
 		a.hotkeyEnabled = true
-		// Apply configured hotkey type
-		hotkeyType := configManager.Get().RecordingHotkey
-		if hotkeyType == "" {
-			hotkeyType = "rightOption"
-		}
-		a.hotkeyManager.SetHotkeyType(hotkeyType)
 		fmt.Printf("Global hotkey registered: %s\n", hotkey.GetHotkeyDisplayName(hotkeyType))
 	}
 
@@ -487,10 +497,10 @@ func (a *App) StartRecording() error {
 	// Show native overlay
 	a.overlay.Show()
 
-	// Enable escape key to cancel recording (native/global)
-	fmt.Println("DEBUG: Enabling escape cancel")
-	a.hotkeyManager.EnableEscapeCancel(func() {
-		fmt.Println("DEBUG: Escape callback triggered!")
+	// Enable cancel key to cancel recording (native/global)
+	fmt.Println("DEBUG: Enabling cancel key")
+	a.hotkeyManager.EnableCancelKey(func() {
+		fmt.Println("DEBUG: Cancel key callback triggered!")
 		a.CancelRecording()
 	})
 
@@ -508,8 +518,8 @@ func (a *App) StopRecording() error {
 	a.state = StateTranscribing
 	a.mu.Unlock()
 
-	// Disable escape cancel and audio level callback
-	a.hotkeyManager.DisableEscapeCancel()
+	// Disable cancel key and audio level callback
+	a.hotkeyManager.DisableCancelKey()
 	a.recorder.SetLevelCallback(nil)
 
 	// Update overlay to show transcribing status
@@ -544,8 +554,8 @@ func (a *App) CancelRecording() error {
 	onTrayUpdate := a.onTrayUpdate
 	a.mu.Unlock()
 
-	// Disable escape cancel and audio level callback
-	a.hotkeyManager.DisableEscapeCancel()
+	// Disable cancel key and audio level callback
+	a.hotkeyManager.DisableCancelKey()
 	a.recorder.SetLevelCallback(nil)
 
 	// Stop the recorder (discard samples)
@@ -814,42 +824,76 @@ func (a *App) GetStats() UsageStats {
 }
 
 // SetRecordingHotkey sets the recording hotkey
-func (a *App) SetRecordingHotkey(hotkeyType string) error {
-	// Validate hotkey type
-	validTypes := map[string]bool{
-		"rightOption":       true,
-		"leftOption":        true,
-		"fn":                true,
-		"doubleRightOption": true,
-	}
-	if !validTypes[hotkeyType] {
-		return fmt.Errorf("invalid hotkey type: %s", hotkeyType)
+// Accepts any key name, e.g., "rightoption", "f9", "space"
+func (a *App) SetRecordingHotkey(keyName string) error {
+	keyName = strings.ToLower(strings.TrimSpace(keyName))
+	if keyName == "" {
+		return fmt.Errorf("hotkey cannot be empty")
 	}
 	
 	// Update the hotkey manager
 	if a.hotkeyManager != nil {
-		a.hotkeyManager.SetHotkeyType(hotkeyType)
+		a.hotkeyManager.SetHotkeyType(keyName)
 	}
 	
 	// Save to config
-	return a.configManager.SetRecordingHotkey(hotkeyType)
+	return a.configManager.SetRecordingHotkey(keyName)
 }
 
-// GetRecordingHotkey returns the current recording hotkey type
+// GetRecordingHotkey returns the current recording hotkey string
 func (a *App) GetRecordingHotkey() string {
 	if a.configManager != nil {
 		hotkeyType := a.configManager.Get().RecordingHotkey
 		if hotkeyType == "" {
-			return "rightOption"
+			return models.DefaultRecordingHotkey()
 		}
 		return hotkeyType
 	}
-	return "rightOption"
+	return models.DefaultRecordingHotkey()
+}
+
+// SetCancelHotkey sets the cancel hotkey
+// Accepts any key name, e.g., "escape", "f10"
+func (a *App) SetCancelHotkey(keyName string) error {
+	keyName = strings.ToLower(strings.TrimSpace(keyName))
+	if keyName == "" {
+		return fmt.Errorf("cancel hotkey cannot be empty")
+	}
+	
+	// Update the hotkey manager
+	if a.hotkeyManager != nil {
+		a.hotkeyManager.SetCancelKey(keyName)
+	}
+	
+	// Save to config
+	return a.configManager.SetCancelHotkey(keyName)
+}
+
+// GetCancelHotkey returns the current cancel hotkey string
+func (a *App) GetCancelHotkey() string {
+	if a.configManager != nil {
+		cancelKey := a.configManager.Get().CancelHotkey
+		if cancelKey == "" {
+			return "escape"
+		}
+		return cancelKey
+	}
+	return "escape"
+}
+
+// GetPlatform returns the current operating system
+func (a *App) GetPlatform() string {
+	return goruntime.GOOS
 }
 
 // GetRecordingHotkeyDisplayName returns the display name for the current hotkey
 func (a *App) GetRecordingHotkeyDisplayName() string {
 	return hotkey.GetHotkeyDisplayName(a.GetRecordingHotkey())
+}
+
+// GetCancelHotkeyDisplayName returns the display name for the cancel hotkey
+func (a *App) GetCancelHotkeyDisplayName() string {
+	return hotkey.GetHotkeyDisplayName(a.GetCancelHotkey())
 }
 
 // DownloadModel downloads a model

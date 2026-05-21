@@ -10,3 +10,6 @@ Yap
 *.dmg
 *.AppImage
 *.deb
+
+# macOS metadata in subdirectories
+build/**/.DS_Store
