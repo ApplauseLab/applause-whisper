@@ -34,6 +34,14 @@ export function GetAudioInputDevices() {
   return window['go']['main']['App']['GetAudioInputDevices']();
 }
 
+export function GetCancelHotkey() {
+  return window['go']['main']['App']['GetCancelHotkey']();
+}
+
+export function GetCancelHotkeyDisplayName() {
+  return window['go']['main']['App']['GetCancelHotkeyDisplayName']();
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
@@ -48,6 +56,10 @@ export function GetHistory() {
 
 export function GetModels() {
   return window['go']['main']['App']['GetModels']();
+}
+
+export function GetPlatform() {
+  return window['go']['main']['App']['GetPlatform']();
 }
 
 export function GetRecordingHotkey() {
@@ -100,6 +112,10 @@ export function SetAudioInputDevice(arg1) {
 
 export function SetAutoPaste(arg1) {
   return window['go']['main']['App']['SetAutoPaste'](arg1);
+}
+
+export function SetCancelHotkey(arg1) {
+  return window['go']['main']['App']['SetCancelHotkey'](arg1);
 }
 
 export function SetModel(arg1) {

@@ -19,6 +19,10 @@ export function GetAudioData(arg1:string):Promise<string>;
 
 export function GetAudioInputDevices():Promise<Array<main.AudioInputDevice>>;
 
+export function GetCancelHotkey():Promise<string>;
+
+export function GetCancelHotkeyDisplayName():Promise<string>;
+
 export function GetConfig():Promise<models.Config>;
 
 export function GetCurrentAudioInputDevice():Promise<string>;
@@ -26,6 +30,8 @@ export function GetCurrentAudioInputDevice():Promise<string>;
 export function GetHistory():Promise<Array<main.HistoryItem>>;
 
 export function GetModels():Promise<Array<main.ModelInfo>>;
+
+export function GetPlatform():Promise<string>;
 
 export function GetRecordingHotkey():Promise<string>;
 
@@ -52,6 +58,8 @@ export function RequestMicrophonePermission():Promise<string>;
 export function SetAudioInputDevice(arg1:string):Promise<void>;
 
 export function SetAutoPaste(arg1:boolean):Promise<void>;
+
+export function SetCancelHotkey(arg1:string):Promise<void>;
 
 export function SetModel(arg1:string):Promise<void>;
 

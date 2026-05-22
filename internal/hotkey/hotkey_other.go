@@ -1,9 +1,10 @@
-//go:build !darwin
+//go:build !darwin && !windows && !linux
 
 package hotkey
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -34,7 +35,8 @@ func (m *Manager) Register(callback Callback) error {
 	m.callback = callback
 	m.running = true
 
-	// TODO: Implement for other platforms
+	// Hotkeys not supported on this platform
+	fmt.Println("Warning: Hotkeys are not supported on this platform")
 	return nil
 }
 
@@ -54,38 +56,48 @@ func (m *Manager) IsRegistered() bool {
 	return m.running
 }
 
-// EnableEscapeCancel starts monitoring for Escape key (no-op on non-darwin)
-func (m *Manager) EnableEscapeCancel(cb func()) {
-	// TODO: Implement for other platforms
+// EnableCancelKey starts monitoring for the cancel key (no-op)
+func (m *Manager) EnableCancelKey(cb func()) {
+	// Not supported on this platform
 }
 
-// DisableEscapeCancel stops monitoring for Escape key (no-op on non-darwin)
-func (m *Manager) DisableEscapeCancel() {
-	// TODO: Implement for other platforms
+// DisableCancelKey stops monitoring for the cancel key (no-op)
+func (m *Manager) DisableCancelKey() {
+	// Not supported on this platform
 }
 
-// SetHotkeyType changes the hotkey type (no-op on non-darwin)
+// SetHotkeyType sets the hotkey (no-op)
 func (m *Manager) SetHotkeyType(hotkeyType string) {
-	// TODO: Implement for other platforms
+	// Not supported on this platform
 }
 
-// GetHotkeyDisplayName returns the display name for a hotkey type
-func GetHotkeyDisplayName(hotkeyType string) string {
-	switch hotkeyType {
-	case "leftOption":
-		return "Left Option (⌥)"
-	case "fn":
-		return "Fn"
-	case "doubleRightOption":
-		return "Double-tap Right Option"
-	default:
-		return "Right Option (⌥)"
-	}
+// SetCancelKey sets the cancel key (no-op)
+func (m *Manager) SetCancelKey(keyName string) {
+	// Not supported on this platform
 }
 
-// RequestAccessibilityPermissions is a no-op on non-darwin platforms
-// Returns true since no special permissions are needed
+// GetHotkeyDisplayName returns the display name for a hotkey
+func GetHotkeyDisplayName(hotkeyName string) string {
+	return KeyNameToDisplayName(hotkeyName)
+}
+
+// RequestAccessibilityPermissions is a no-op on unsupported platforms
 func RequestAccessibilityPermissions() bool {
-	// No accessibility permissions needed on non-macOS platforms
 	return true
+}
+
+// KeyNameToDisplayName converts a key name to a display-friendly name
+func KeyNameToDisplayName(name string) string {
+	switch strings.ToLower(name) {
+	case "rightalt", "rightoption":
+		return "Right Alt"
+	case "leftalt", "leftoption":
+		return "Left Alt"
+	case "escape", "esc":
+		return "Escape"
+	case "space":
+		return "Space"
+	default:
+		return strings.ToUpper(name)
+	}
 }
