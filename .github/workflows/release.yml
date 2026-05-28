@@ -385,8 +385,7 @@ jobs:
             libwebkit2gtk-4.1-dev \
             portaudio19-dev \
             pkg-config \
-            libfuse3-3 \
-            fuse3
+            libfuse2
 
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
@@ -401,9 +400,10 @@ jobs:
 
       - name: Create AppImage
         run: |
-          # Download appimagetool
+          # Download appimagetool and extract it (to avoid FUSE dependency)
           wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool-x86_64.AppImage
+          ./appimagetool-x86_64.AppImage --appimage-extract
           
           # Create AppDir structure
           mkdir -p AppDir/usr/bin
@@ -447,8 +447,8 @@ jobs:
           ln -sf usr/share/applications/yap.desktop AppDir/yap.desktop
           ln -sf usr/share/icons/hicolor/256x256/apps/yap.png AppDir/yap.png
           
-          # Build AppImage
-          ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir "Yap-${{ needs.prepare.outputs.version }}-Linux-ubuntu24.AppImage"
+          # Build AppImage using extracted appimagetool
+          ARCH=x86_64 ./squashfs-root/AppRun AppDir "Yap-${{ needs.prepare.outputs.version }}-Linux-ubuntu24.AppImage"
 
       - name: Create DEB package
         run: |
