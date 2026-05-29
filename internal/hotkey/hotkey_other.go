@@ -66,6 +66,14 @@ func (m *Manager) DisableCancelKey() {
 	// Not supported on this platform
 }
 
+// SetMediaControlEnabled is not supported on this platform.
+func (m *Manager) SetMediaControlEnabled(enabled bool, cb func()) {
+}
+
+// RefreshMediaControl is not supported on this platform.
+func (m *Manager) RefreshMediaControl() {
+}
+
 // SetHotkeyType sets the hotkey (no-op)
 func (m *Manager) SetHotkeyType(hotkeyType string) {
 	// Not supported on this platform
@@ -83,6 +91,11 @@ func GetHotkeyDisplayName(hotkeyName string) string {
 
 // RequestAccessibilityPermissions is a no-op on unsupported platforms
 func RequestAccessibilityPermissions() bool {
+	return true
+}
+
+// RequestInputMonitoringPermissions is a no-op on unsupported platforms.
+func RequestInputMonitoringPermissions() bool {
 	return true
 }
 

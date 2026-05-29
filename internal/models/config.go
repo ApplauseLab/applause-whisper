@@ -24,6 +24,15 @@ type Config struct {
 	// Auto-paste after transcription
 	AutoPaste bool `json:"autoPaste"`
 
+	// Press Enter after auto-pasting the transcription
+	PasteSubmit bool `json:"pasteSubmit"`
+
+	// Allow keyboard/media play-pause keys to start/stop recording
+	AirPodsControlEnabled bool `json:"airPodsControlEnabled"`
+
+	// Automatically stop recording after sustained silence
+	AutoStopSilence bool `json:"autoStopSilence"`
+
 	// Show notification after transcription
 	ShowNotification bool `json:"showNotification"`
 
@@ -46,13 +55,16 @@ type Config struct {
 func DefaultConfig() *Config {
 	soundEnabled := true
 	return &Config{
-		Provider:         "local",
-		Model:            "base.en",
-		AutoPaste:        true,
-		ShowNotification: true,
-		RecordingHotkey:  DefaultRecordingHotkey(),
-		CancelHotkey:     "escape",
-		SoundEnabled:     &soundEnabled,
+		Provider:              "local",
+		Model:                 "base.en",
+		AutoPaste:             true,
+		PasteSubmit:           false,
+		AirPodsControlEnabled: false,
+		AutoStopSilence:       false,
+		ShowNotification:      true,
+		RecordingHotkey:       DefaultRecordingHotkey(),
+		CancelHotkey:          "escape",
+		SoundEnabled:          &soundEnabled,
 	}
 }
 
@@ -172,6 +184,24 @@ func (cm *ConfigManager) SetOpenAIAPIKey(key string) error {
 // SetAutoPaste updates the auto-paste setting
 func (cm *ConfigManager) SetAutoPaste(enabled bool) error {
 	cm.config.AutoPaste = enabled
+	return cm.Save()
+}
+
+// SetPasteSubmit updates the paste-submit setting
+func (cm *ConfigManager) SetPasteSubmit(enabled bool) error {
+	cm.config.PasteSubmit = enabled
+	return cm.Save()
+}
+
+// SetAirPodsControlEnabled updates the AirPods control setting
+func (cm *ConfigManager) SetAirPodsControlEnabled(enabled bool) error {
+	cm.config.AirPodsControlEnabled = enabled
+	return cm.Save()
+}
+
+// SetAutoStopSilence updates the auto-stop-on-silence setting
+func (cm *ConfigManager) SetAutoStopSilence(enabled bool) error {
+	cm.config.AutoStopSilence = enabled
 	return cm.Save()
 }
 

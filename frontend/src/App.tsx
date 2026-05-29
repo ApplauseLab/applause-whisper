@@ -15,6 +15,9 @@ import {
   DownloadModel,
   GetConfig,
   SetAutoPaste,
+  SetPasteSubmit,
+  SetAirPodsControlEnabled,
+  SetAutoStopSilence,
   SetSoundEnabled,
   GetHistory,
   ClearHistory,
@@ -60,6 +63,9 @@ interface Config {
   openaiApiKey?: string;
   audioInputDevice?: string;
   autoPaste: boolean;
+  pasteSubmit: boolean;
+  airPodsControlEnabled: boolean;
+  autoStopSilence: boolean;
   soundEnabled?: boolean;
 }
 
@@ -337,6 +343,21 @@ function App() {
 
   const handleAutoPasteChange = useCallback(async (enabled: boolean) => {
     await SetAutoPaste(enabled);
+    GetConfig().then((c: Config) => setConfig(c));
+  }, []);
+
+  const handlePasteSubmitChange = useCallback(async (enabled: boolean) => {
+    await SetPasteSubmit(enabled);
+    GetConfig().then((c: Config) => setConfig(c));
+  }, []);
+
+  const handleAirPodsControlChange = useCallback(async (enabled: boolean) => {
+    await SetAirPodsControlEnabled(enabled);
+    GetConfig().then((c: Config) => setConfig(c));
+  }, []);
+
+  const handleAutoStopSilenceChange = useCallback(async (enabled: boolean) => {
+    await SetAutoStopSilence(enabled);
     GetConfig().then((c: Config) => setConfig(c));
   }, []);
 
@@ -845,6 +866,54 @@ function App() {
                     type="checkbox"
                     checked={config?.autoPaste ?? true}
                     onChange={(e) => handleAutoPasteChange(e.target.checked)}
+                  />
+                  <span className="slider" />
+                </label>
+              </div>
+
+              <div className="setting-row">
+                <div className="setting-info">
+                  <label>Submit after paste</label>
+                  <p>Press Return after auto-pasting the transcript</p>
+                </div>
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={config?.pasteSubmit ?? false}
+                    onChange={(e) => handlePasteSubmitChange(e.target.checked)}
+                    disabled={!(config?.autoPaste ?? true)}
+                  />
+                  <span className="slider" />
+                </label>
+              </div>
+
+              {platform === 'darwin' && (
+                <div className="setting-row">
+                  <div className="setting-info">
+                    <label>AirPods media mode</label>
+                    <p>Keep a silent media session active so AirPods/media play-pause can control recording</p>
+                  </div>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={config?.airPodsControlEnabled ?? false}
+                      onChange={(e) => handleAirPodsControlChange(e.target.checked)}
+                    />
+                    <span className="slider" />
+                  </label>
+                </div>
+              )}
+
+              <div className="setting-row">
+                <div className="setting-info">
+                  <label>Auto-stop on silence</label>
+                  <p>Stop recording after a short pause in speech</p>
+                </div>
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={config?.autoStopSilence ?? false}
+                    onChange={(e) => handleAutoStopSilenceChange(e.target.checked)}
                   />
                   <span className="slider" />
                 </label>

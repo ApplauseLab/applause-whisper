@@ -106,12 +106,20 @@ export function RequestMicrophonePermission() {
   return window['go']['main']['App']['RequestMicrophonePermission']();
 }
 
+export function SetAirPodsControlEnabled(arg1) {
+  return window['go']['main']['App']['SetAirPodsControlEnabled'](arg1);
+}
+
 export function SetAudioInputDevice(arg1) {
   return window['go']['main']['App']['SetAudioInputDevice'](arg1);
 }
 
 export function SetAutoPaste(arg1) {
   return window['go']['main']['App']['SetAutoPaste'](arg1);
+}
+
+export function SetAutoStopSilence(arg1) {
+  return window['go']['main']['App']['SetAutoStopSilence'](arg1);
 }
 
 export function SetCancelHotkey(arg1) {
@@ -128,6 +136,10 @@ export function SetOnboardingCompleted(arg1) {
 
 export function SetOpenAIKey(arg1) {
   return window['go']['main']['App']['SetOpenAIKey'](arg1);
+}
+
+export function SetPasteSubmit(arg1) {
+  return window['go']['main']['App']['SetPasteSubmit'](arg1);
 }
 
 export function SetProvider(arg1) {
@@ -164,4 +176,8 @@ export function StopRecording() {
 
 export function ToggleRecording() {
   return window['go']['main']['App']['ToggleRecording']();
+}
+
+export function ToggleRecordingFromMediaControl() {
+  return window['go']['main']['App']['ToggleRecordingFromMediaControl']();
 }
