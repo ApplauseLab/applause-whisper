@@ -115,6 +115,9 @@ export namespace models {
 	    openaiApiKey?: string;
 	    audioInputDevice?: string;
 	    autoPaste: boolean;
+	    pasteSubmit: boolean;
+	    airPodsControlEnabled: boolean;
+	    autoStopSilence: boolean;
 	    showNotification: boolean;
 	    recordingHotkey: string;
 	    cancelHotkey: string;
@@ -132,6 +135,9 @@ export namespace models {
 	        this.openaiApiKey = source["openaiApiKey"];
 	        this.audioInputDevice = source["audioInputDevice"];
 	        this.autoPaste = source["autoPaste"];
+	        this.pasteSubmit = source["pasteSubmit"];
+	        this.airPodsControlEnabled = source["airPodsControlEnabled"];
+	        this.autoStopSilence = source["autoStopSilence"];
 	        this.showNotification = source["showNotification"];
 	        this.recordingHotkey = source["recordingHotkey"];
 	        this.cancelHotkey = source["cancelHotkey"];

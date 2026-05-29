@@ -4,17 +4,27 @@ package hotkey
 
 /*
 #cgo CFLAGS: -x objective-c
-#cgo LDFLAGS: -framework Cocoa -framework Carbon -framework ApplicationServices
+#cgo LDFLAGS: -framework Cocoa -framework Carbon -framework ApplicationServices -framework AVFoundation -framework MediaPlayer
 
 #import <Cocoa/Cocoa.h>
 #import <Carbon/Carbon.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <AVFoundation/AVFoundation.h>
+#import <MediaPlayer/MediaPlayer.h>
 
 static id gEventMonitor = nil;
 static id gKeyEventMonitor = nil;
 static id gLocalKeyEventMonitor = nil;
+static id gMediaEventMonitor = nil;
+static id gPlayCommandTarget = nil;
+static id gPauseCommandTarget = nil;
+static id gToggleCommandTarget = nil;
+static AVAudioPlayer *gSilentPlayer = nil;
+static CFMachPortRef gSystemEventTap = NULL;
+static CFRunLoopSourceRef gSystemEventTapSource = NULL;
 static BOOL gHotkeyKeyDown = NO;
 static BOOL gCancelKeyEnabled = NO;
+static BOOL gMediaControlEnabled = NO;
 static UInt16 gCurrentHotkeyCode = 0x3D;  // Default: Right Option
 static UInt16 gCurrentCancelCode = 53;     // Default: Escape
 static BOOL gHotkeyIsModifier = YES;       // Is the hotkey a modifier key?
@@ -22,6 +32,10 @@ static BOOL gCancelIsModifier = NO;        // Is the cancel key a modifier?
 
 extern void goHotkeyPressed(void);
 extern void goCancelPressed(void);
+extern void goMediaPressed(void);
+
+#define NX_KEYTYPE_PLAY 16
+#define NX_SYSDEFINED 14
 
 // Common key codes
 #define kVK_RightOption 0x3D
@@ -38,6 +52,33 @@ extern void goCancelPressed(void);
 #define kVK_Space 0x31
 #define kVK_Tab 0x30
 #define kVK_Return 0x24
+
+static void stopSystemEventTap(void);
+static void stopRemoteCommandMonitoring(void);
+
+static CGEventRef systemEventTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon) {
+    if (!gMediaControlEnabled || type != NX_SYSDEFINED) {
+        return event;
+    }
+
+    NSEvent *nsEvent = [NSEvent eventWithCGEvent:event];
+    if (nsEvent == nil || [nsEvent subtype] != 8) {
+        return event;
+    }
+
+    int keyCode = (([nsEvent data1] & 0xFFFF0000) >> 16);
+    int keyFlags = ([nsEvent data1] & 0x0000FFFF);
+    BOOL keyDown = (((keyFlags & 0xFF00) >> 8) == 0xA);
+    BOOL keyRepeat = (keyFlags & 0x1);
+
+    NSLog(@"System event tap media key: code=%d down=%d repeat=%d flags=%d", keyCode, keyDown, keyRepeat, keyFlags);
+
+    if (keyDown && !keyRepeat && keyCode == NX_KEYTYPE_PLAY) {
+        goMediaPressed();
+    }
+
+    return event;
+}
 
 // Check if accessibility permissions are granted (with optional prompt)
 static int checkAccessibilityPermissionsWithPrompt(int shouldPrompt) {
@@ -64,6 +105,18 @@ static int requestAccessibilityPermissions(void) {
         NSLog(@"Add and enable this application");
     }
     return trusted;
+}
+
+// Request Input Monitoring permissions for lower-level media key events.
+static int requestInputMonitoringPermissions(void) {
+    if (@available(macOS 10.15, *)) {
+        if (CGPreflightListenEventAccess()) {
+            return 1;
+        }
+        NSLog(@"Requesting Input Monitoring permissions...");
+        return CGRequestListenEventAccess() ? 1 : 0;
+    }
+    return 1;
 }
 
 // Check if a key code is a modifier key
@@ -110,6 +163,7 @@ static NSEventModifierFlags getModifierFlag(UInt16 keyCode) {
 }
 
 static void stopAllMonitoring(void) {
+    BOOL wasMediaControlEnabled = gMediaControlEnabled;
     if (gEventMonitor != nil) {
         [NSEvent removeMonitor:gEventMonitor];
         gEventMonitor = nil;
@@ -122,25 +176,245 @@ static void stopAllMonitoring(void) {
         [NSEvent removeMonitor:gLocalKeyEventMonitor];
         gLocalKeyEventMonitor = nil;
     }
+    if (!wasMediaControlEnabled && gMediaEventMonitor != nil) {
+        [NSEvent removeMonitor:gMediaEventMonitor];
+        gMediaEventMonitor = nil;
+    }
     gHotkeyKeyDown = NO;
     gCancelKeyEnabled = NO;
 }
 
+static void stopAllMonitoringForShutdown(void) {
+    gMediaControlEnabled = NO;
+    stopAllMonitoring();
+    stopSystemEventTap();
+    stopRemoteCommandMonitoring();
+}
+
+static void startSystemEventTap(void) {
+    if (gSystemEventTap != NULL) {
+        return;
+    }
+
+    gSystemEventTap = CGEventTapCreate(kCGSessionEventTap,
+                                       kCGHeadInsertEventTap,
+                                       kCGEventTapOptionListenOnly,
+                                       CGEventMaskBit(NX_SYSDEFINED),
+                                       systemEventTapCallback,
+                                       NULL);
+    if (gSystemEventTap == NULL) {
+        NSLog(@"Failed to create system event tap for media keys");
+        return;
+    }
+
+    gSystemEventTapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, gSystemEventTap, 0);
+    CFRunLoopAddSource(CFRunLoopGetMain(), gSystemEventTapSource, kCFRunLoopCommonModes);
+    CGEventTapEnable(gSystemEventTap, true);
+    NSLog(@"System event tap started for AirPods/media control");
+}
+
+static void stopSystemEventTap(void) {
+    if (gSystemEventTap != NULL) {
+        CGEventTapEnable(gSystemEventTap, false);
+    }
+    if (gSystemEventTapSource != NULL) {
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), gSystemEventTapSource, kCFRunLoopCommonModes);
+        CFRelease(gSystemEventTapSource);
+        gSystemEventTapSource = NULL;
+    }
+    if (gSystemEventTap != NULL) {
+        CFRelease(gSystemEventTap);
+        gSystemEventTap = NULL;
+    }
+}
+
+static void appendUInt16LE(NSMutableData *data, uint16_t value) {
+    uint8_t bytes[2] = { value & 0xff, (value >> 8) & 0xff };
+    [data appendBytes:bytes length:2];
+}
+
+static void appendUInt32LE(NSMutableData *data, uint32_t value) {
+    uint8_t bytes[4] = { value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, (value >> 24) & 0xff };
+    [data appendBytes:bytes length:4];
+}
+
+static NSData *silentWAVData(void) {
+    const uint32_t sampleRate = 16000;
+    const uint16_t channels = 1;
+    const uint16_t bitsPerSample = 16;
+    const uint32_t frames = sampleRate;
+    const uint32_t dataSize = frames * channels * (bitsPerSample / 8);
+
+    NSMutableData *data = [NSMutableData dataWithCapacity:44 + dataSize];
+    [data appendBytes:"RIFF" length:4];
+    appendUInt32LE(data, 36 + dataSize);
+    [data appendBytes:"WAVE" length:4];
+    [data appendBytes:"fmt " length:4];
+    appendUInt32LE(data, 16);
+    appendUInt16LE(data, 1);
+    appendUInt16LE(data, channels);
+    appendUInt32LE(data, sampleRate);
+    appendUInt32LE(data, sampleRate * channels * (bitsPerSample / 8));
+    appendUInt16LE(data, channels * (bitsPerSample / 8));
+    appendUInt16LE(data, bitsPerSample);
+    [data appendBytes:"data" length:4];
+    appendUInt32LE(data, dataSize);
+    [data increaseLengthBy:dataSize];
+    return data;
+}
+
+static void startSilentPlayback(void) {
+    if (gSilentPlayer != nil && gSilentPlayer.playing) {
+        return;
+    }
+
+    NSError *error = nil;
+    gSilentPlayer = [[AVAudioPlayer alloc] initWithData:silentWAVData() error:&error];
+    if (gSilentPlayer == nil) {
+        NSLog(@"Failed to create silent media player: %@", error);
+        return;
+    }
+
+    gSilentPlayer.numberOfLoops = -1;
+    gSilentPlayer.volume = 0.0;
+    [gSilentPlayer prepareToPlay];
+    [gSilentPlayer play];
+    NSLog(@"Silent media playback started for AirPods control");
+}
+
+static void stopSilentPlayback(void) {
+    if (gSilentPlayer != nil) {
+        [gSilentPlayer stop];
+        gSilentPlayer = nil;
+        NSLog(@"Silent media playback stopped");
+    }
+}
+
+static void stopRemoteCommandMonitoring(void) {
+    MPRemoteCommandCenter *commandCenter = [MPRemoteCommandCenter sharedCommandCenter];
+
+    if (gPlayCommandTarget != nil) {
+        [commandCenter.playCommand removeTarget:gPlayCommandTarget];
+        gPlayCommandTarget = nil;
+    }
+    if (gPauseCommandTarget != nil) {
+        [commandCenter.pauseCommand removeTarget:gPauseCommandTarget];
+        gPauseCommandTarget = nil;
+    }
+    if (gToggleCommandTarget != nil) {
+        [commandCenter.togglePlayPauseCommand removeTarget:gToggleCommandTarget];
+        gToggleCommandTarget = nil;
+    }
+
+    commandCenter.playCommand.enabled = NO;
+    commandCenter.pauseCommand.enabled = NO;
+    commandCenter.togglePlayPauseCommand.enabled = NO;
+    [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo = nil;
+    stopSilentPlayback();
+}
+
+static void startRemoteCommandMonitoring(void) {
+    if (gToggleCommandTarget != nil) {
+        startSilentPlayback();
+        return;
+    }
+
+    MPRemoteCommandCenter *commandCenter = [MPRemoteCommandCenter sharedCommandCenter];
+    commandCenter.playCommand.enabled = YES;
+    commandCenter.pauseCommand.enabled = YES;
+    commandCenter.togglePlayPauseCommand.enabled = YES;
+
+    MPRemoteCommandHandlerStatus (^handler)(MPRemoteCommandEvent *) = ^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
+        if (!gMediaControlEnabled) {
+            return MPRemoteCommandHandlerStatusCommandFailed;
+        }
+        NSLog(@"AirPods/media remote command received: %@", event.command);
+        goMediaPressed();
+        startSilentPlayback();
+        return MPRemoteCommandHandlerStatusSuccess;
+    };
+
+    gPlayCommandTarget = [commandCenter.playCommand addTargetWithHandler:handler];
+    gPauseCommandTarget = [commandCenter.pauseCommand addTargetWithHandler:handler];
+    gToggleCommandTarget = [commandCenter.togglePlayPauseCommand addTargetWithHandler:handler];
+
+    [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo = @{
+        MPMediaItemPropertyTitle: @"Yap Recording Control",
+        MPMediaItemPropertyArtist: @"Yap",
+        MPNowPlayingInfoPropertyPlaybackRate: @1
+    };
+
+    startSilentPlayback();
+    NSLog(@"Remote command monitoring started for AirPods control");
+}
+
+static void refreshMediaControl(void) {
+    if (!gMediaControlEnabled) {
+        return;
+    }
+    startRemoteCommandMonitoring();
+    startSilentPlayback();
+    NSLog(@"Media control session refreshed");
+}
+
+static void startMediaMonitoring(void) {
+    if (gMediaEventMonitor != nil) {
+        return;
+    }
+
+    gMediaEventMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskSystemDefined
+        handler:^(NSEvent *event) {
+            if (!gMediaControlEnabled || [event subtype] != 8) {
+                return;
+            }
+
+            int keyCode = (([event data1] & 0xFFFF0000) >> 16);
+            int keyFlags = ([event data1] & 0x0000FFFF);
+            BOOL keyDown = (((keyFlags & 0xFF00) >> 8) == 0xA);
+            BOOL keyRepeat = (keyFlags & 0x1);
+
+            if (keyDown && !keyRepeat && keyCode == NX_KEYTYPE_PLAY) {
+                goMediaPressed();
+            }
+        }];
+
+    NSLog(@"Media key monitoring started for AirPods control");
+}
+
+static void setMediaControlEnabled(int enabled) {
+    gMediaControlEnabled = enabled ? YES : NO;
+
+    if (gMediaControlEnabled) {
+        startRemoteCommandMonitoring();
+        startSystemEventTap();
+        startMediaMonitoring();
+    } else if (gMediaEventMonitor != nil) {
+        [NSEvent removeMonitor:gMediaEventMonitor];
+        gMediaEventMonitor = nil;
+        stopRemoteCommandMonitoring();
+        stopSystemEventTap();
+        NSLog(@"Media key monitoring stopped");
+    } else {
+        stopRemoteCommandMonitoring();
+        stopSystemEventTap();
+    }
+}
+
 static void startMonitoring(void) {
     stopAllMonitoring();
-    
+
     // Check accessibility permissions first
     if (!hasAccessibilityPermissions()) {
         NSLog(@"Cannot start monitoring without accessibility permissions");
         return;
     }
-    
+
     // Monitor for modifier keys (flagsChanged events)
     gEventMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged
         handler:^(NSEvent *event) {
             UInt16 keyCode = [event keyCode];
             NSEventModifierFlags flags = [event modifierFlags];
-            
+
             // Check hotkey (if it's a modifier)
             if (gHotkeyIsModifier && keyCode == gCurrentHotkeyCode) {
                 NSEventModifierFlags modFlag = getModifierFlag(keyCode);
@@ -153,7 +427,7 @@ static void startMonitoring(void) {
                     gHotkeyKeyDown = NO;
                 }
             }
-            
+
             // Check cancel key (if it's a modifier)
             if (gCancelKeyEnabled && gCancelIsModifier && keyCode == gCurrentCancelCode) {
                 NSEventModifierFlags modFlag = getModifierFlag(keyCode);
@@ -162,43 +436,43 @@ static void startMonitoring(void) {
                 }
             }
         }];
-    
+
     // Monitor for regular keys (keyDown events)
     gKeyEventMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskKeyDown
         handler:^(NSEvent *event) {
             UInt16 keyCode = [event keyCode];
-            
+
             // Check hotkey (if it's NOT a modifier)
             if (!gHotkeyIsModifier && keyCode == gCurrentHotkeyCode) {
                 goHotkeyPressed();
             }
-            
+
             // Check cancel key (if it's NOT a modifier)
             if (gCancelKeyEnabled && !gCancelIsModifier && keyCode == gCurrentCancelCode) {
                 goCancelPressed();
             }
         }];
-    
+
     // Local monitor for when this app has focus
     gLocalKeyEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
         handler:^NSEvent *(NSEvent *event) {
             UInt16 keyCode = [event keyCode];
-            
+
             // Check hotkey (if it's NOT a modifier)
             if (!gHotkeyIsModifier && keyCode == gCurrentHotkeyCode) {
                 goHotkeyPressed();
                 return nil; // Consume event
             }
-            
+
             // Check cancel key (if it's NOT a modifier)
             if (gCancelKeyEnabled && !gCancelIsModifier && keyCode == gCurrentCancelCode) {
                 goCancelPressed();
                 return nil; // Consume event
             }
-            
+
             return event;
         }];
-    
+
     NSLog(@"Key monitoring started - hotkey: %d, cancel: %d", gCurrentHotkeyCode, gCurrentCancelCode);
 }
 
@@ -239,6 +513,8 @@ var (
 	hotkeyC          = make(chan struct{}, 1)
 	cancelCallbackMu sync.Mutex
 	cancelCallback   func()
+	mediaCallbackMu  sync.Mutex
+	mediaCallback    func()
 )
 
 //export goHotkeyPressed
@@ -260,16 +536,27 @@ func goCancelPressed() {
 	}
 }
 
+//export goMediaPressed
+func goMediaPressed() {
+	fmt.Println("AirPods/media control callback triggered")
+	mediaCallbackMu.Lock()
+	cb := mediaCallback
+	mediaCallbackMu.Unlock()
+	if cb != nil {
+		go cb()
+	}
+}
+
 // Callback is the function type for hotkey events
 type Callback func()
 
 // Manager handles global hotkey registration
 type Manager struct {
-	mu         sync.Mutex
-	running    bool
-	stopC      chan struct{}
-	hotkeyStr  string
-	cancelStr  string
+	mu        sync.Mutex
+	running   bool
+	stopC     chan struct{}
+	hotkeyStr string
+	cancelStr string
 }
 
 // NewManager creates a new hotkey manager
@@ -296,7 +583,7 @@ func (m *Manager) Register(cb Callback) error {
 	// Set the hotkey code
 	keyCode := KeyNameToCode(m.hotkeyStr)
 	C.setHotkeyCode(C.UInt16(keyCode))
-	
+
 	// Set the cancel key code
 	cancelCode := KeyNameToCode(m.cancelStr)
 	C.setCancelCode(C.UInt16(cancelCode))
@@ -336,25 +623,50 @@ func (m *Manager) Unregister() error {
 	}
 
 	close(m.stopC)
-	C.stopAllMonitoring()
+	C.stopAllMonitoringForShutdown()
 	m.running = false
 
 	return nil
+}
+
+// SetMediaControlEnabled starts or stops using AirPods/media play-pause as a recording control.
+func (m *Manager) SetMediaControlEnabled(enabled bool, cb func()) {
+	mediaCallbackMu.Lock()
+	if enabled {
+		mediaCallback = cb
+	} else {
+		mediaCallback = nil
+	}
+	mediaCallbackMu.Unlock()
+
+	C.setMediaControlEnabled(C.int(boolToInt(enabled)))
+}
+
+// RefreshMediaControl re-primes the media session after recording releases the mic.
+func (m *Manager) RefreshMediaControl() {
+	C.refreshMediaControl()
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 // SetHotkeyType sets the recording hotkey by name
 func (m *Manager) SetHotkeyType(hotkeyName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	m.hotkeyStr = strings.ToLower(hotkeyName)
 	keyCode := KeyNameToCode(m.hotkeyStr)
 	C.setHotkeyCode(C.UInt16(keyCode))
-	
+
 	if m.running {
 		C.startMonitoring()
 	}
-	
+
 	fmt.Printf("Hotkey set to: %s (code: %d)\n", m.hotkeyStr, keyCode)
 }
 
@@ -362,11 +674,11 @@ func (m *Manager) SetHotkeyType(hotkeyName string) {
 func (m *Manager) SetCancelKey(keyName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	m.cancelStr = strings.ToLower(keyName)
 	cancelCode := KeyNameToCode(m.cancelStr)
 	C.setCancelCode(C.UInt16(cancelCode))
-	
+
 	fmt.Printf("Cancel key set to: %s (code: %d)\n", m.cancelStr, cancelCode)
 }
 
@@ -382,14 +694,14 @@ func (m *Manager) EnableCancelKey(cb func()) {
 	cancelCallbackMu.Lock()
 	cancelCallback = cb
 	cancelCallbackMu.Unlock()
-	
+
 	C.enableCancelKey()
 }
 
 // DisableCancelKey stops monitoring for the cancel key
 func (m *Manager) DisableCancelKey() {
 	C.disableCancelKey()
-	
+
 	cancelCallbackMu.Lock()
 	cancelCallback = nil
 	cancelCallbackMu.Unlock()
@@ -403,6 +715,11 @@ func GetHotkeyDisplayName(hotkeyName string) string {
 // RequestAccessibilityPermissions prompts user for accessibility permissions
 func RequestAccessibilityPermissions() bool {
 	return C.requestAccessibilityPermissions() != 0
+}
+
+// RequestInputMonitoringPermissions prompts user for Input Monitoring permissions.
+func RequestInputMonitoringPermissions() bool {
+	return C.requestInputMonitoringPermissions() != 0
 }
 
 // KeyNameToCode converts a key name to a macOS key code
@@ -429,7 +746,7 @@ func KeyNameToCode(name string) uint16 {
 		return 0x3F
 	case "capslock":
 		return 0x39
-	
+
 	// Special keys
 	case "escape", "esc":
 		return 0x35
@@ -443,7 +760,7 @@ func KeyNameToCode(name string) uint16 {
 		return 0x33
 	case "forwarddelete":
 		return 0x75
-	
+
 	// Arrow keys
 	case "left", "arrowleft":
 		return 0x7B
@@ -453,7 +770,7 @@ func KeyNameToCode(name string) uint16 {
 		return 0x7E
 	case "down", "arrowdown":
 		return 0x7D
-	
+
 	// Function keys
 	case "f1":
 		return 0x7A
@@ -479,7 +796,7 @@ func KeyNameToCode(name string) uint16 {
 		return 0x67
 	case "f12":
 		return 0x6F
-	
+
 	// Letter keys
 	case "a":
 		return 0x00
@@ -533,7 +850,7 @@ func KeyNameToCode(name string) uint16 {
 		return 0x10
 	case "z":
 		return 0x06
-	
+
 	// Number keys
 	case "0":
 		return 0x1D
@@ -555,7 +872,7 @@ func KeyNameToCode(name string) uint16 {
 		return 0x1C
 	case "9":
 		return 0x19
-	
+
 	default:
 		return 0x3D // Default to right option
 	}

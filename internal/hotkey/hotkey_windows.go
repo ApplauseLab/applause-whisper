@@ -304,6 +304,14 @@ func (m *Manager) DisableCancelKey() {
 	m.cancelCallback = nil
 }
 
+// SetMediaControlEnabled is not supported on Windows.
+func (m *Manager) SetMediaControlEnabled(enabled bool, cb func()) {
+}
+
+// RefreshMediaControl is not supported on Windows.
+func (m *Manager) RefreshMediaControl() {
+}
+
 // GetHotkeyDisplayName returns the display name for a hotkey
 func GetHotkeyDisplayName(hotkeyName string) string {
 	return KeyNameToDisplayName(hotkeyName)
@@ -311,6 +319,11 @@ func GetHotkeyDisplayName(hotkeyName string) string {
 
 // RequestAccessibilityPermissions is a no-op on Windows
 func RequestAccessibilityPermissions() bool {
+	return true
+}
+
+// RequestInputMonitoringPermissions is a no-op on Windows.
+func RequestInputMonitoringPermissions() bool {
 	return true
 }
 

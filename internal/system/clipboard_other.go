@@ -14,3 +14,9 @@ func SaveFrontmostApp() {
 func simulatePasteMacOSNative() error {
 	return fmt.Errorf("simulatePasteMacOSNative is only available on macOS")
 }
+
+// simulateEnterMacOSNative is a stub for non-macOS platforms.
+// This should never be called since SimulateEnter checks runtime.GOOS.
+func simulateEnterMacOSNative() error {
+	return fmt.Errorf("simulateEnterMacOSNative is only available on macOS")
+}

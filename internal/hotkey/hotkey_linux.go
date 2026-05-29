@@ -23,7 +23,7 @@ extern void goCancelPressed(void);
 
 static int initDisplay(void) {
     if (display != NULL) return 1;
-    
+
     display = XOpenDisplay(NULL);
     if (display == NULL) {
         fprintf(stderr, "Cannot open X display\n");
@@ -61,10 +61,10 @@ static void disableCancel(void) {
 static void startMonitoring(void) {
     if (display == NULL) return;
     running = 1;
-    
+
     // Grab the hotkey
     XGrabKey(display, hotkeyCode, AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
-    
+
     // Also grab common modifier combinations
     XGrabKey(display, hotkeyCode, Mod2Mask, root, True, GrabModeAsync, GrabModeAsync);
     XGrabKey(display, hotkeyCode, LockMask, root, True, GrabModeAsync, GrabModeAsync);
@@ -74,7 +74,7 @@ static void startMonitoring(void) {
 static void stopMonitoring(void) {
     if (display == NULL) return;
     running = 0;
-    
+
     XUngrabKey(display, hotkeyCode, AnyModifier, root);
     XUngrabKey(display, hotkeyCode, Mod2Mask, root);
     XUngrabKey(display, hotkeyCode, LockMask, root);
@@ -83,18 +83,18 @@ static void stopMonitoring(void) {
 
 static void processEvents(void) {
     if (display == NULL || !running) return;
-    
+
     XEvent event;
     while (XPending(display) > 0) {
         XNextEvent(display, &event);
-        
+
         if (event.type == KeyPress) {
             KeyCode keycode = event.xkey.keycode;
-            
+
             if (keycode == hotkeyCode) {
                 goHotkeyPressed();
             }
-            
+
             if (cancelEnabled && keycode == cancelCode) {
                 goCancelPressed();
             }
@@ -132,10 +132,10 @@ type Manager struct {
 }
 
 var (
-	callbackMu     sync.Mutex
-	hotkeyCallback Callback
+	callbackMu       sync.Mutex
+	hotkeyCallback   Callback
 	cancelCallbackMu sync.Mutex
-	cancelCallback func()
+	cancelCallback   func()
 )
 
 //export goHotkeyPressed
@@ -187,7 +187,7 @@ func (m *Manager) Register(cb Callback) error {
 	// Set the hotkey
 	keysym := KeyNameToKeysym(m.hotkeyStr)
 	C.setHotkeyKeysym(C.KeySym(keysym))
-	
+
 	// Set the cancel key
 	cancelKeysym := KeyNameToKeysym(m.cancelStr)
 	C.setCancelKeysym(C.KeySym(cancelKeysym))
@@ -201,7 +201,7 @@ func (m *Manager) Register(cb Callback) error {
 	go func() {
 		ticker := time.NewTicker(10 * time.Millisecond)
 		defer ticker.Stop()
-		
+
 		for {
 			select {
 			case <-m.stopCh:
@@ -237,10 +237,10 @@ func (m *Manager) Unregister() error {
 func (m *Manager) SetHotkeyType(hotkeyName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	m.hotkeyStr = strings.ToLower(hotkeyName)
 	keysym := KeyNameToKeysym(m.hotkeyStr)
-	
+
 	if m.running {
 		C.stopMonitoring()
 		C.setHotkeyKeysym(C.KeySym(keysym))
@@ -248,7 +248,7 @@ func (m *Manager) SetHotkeyType(hotkeyName string) {
 	} else {
 		C.setHotkeyKeysym(C.KeySym(keysym))
 	}
-	
+
 	fmt.Printf("Hotkey set to: %s\n", m.hotkeyStr)
 }
 
@@ -256,11 +256,11 @@ func (m *Manager) SetHotkeyType(hotkeyName string) {
 func (m *Manager) SetCancelKey(keyName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	m.cancelStr = strings.ToLower(keyName)
 	keysym := KeyNameToKeysym(m.cancelStr)
 	C.setCancelKeysym(C.KeySym(keysym))
-	
+
 	fmt.Printf("Cancel key set to: %s\n", m.cancelStr)
 }
 
@@ -276,27 +276,35 @@ func (m *Manager) EnableCancelKey(cb func()) {
 	cancelCallbackMu.Lock()
 	cancelCallback = cb
 	cancelCallbackMu.Unlock()
-	
+
 	m.mu.Lock()
 	m.cancelCallback = cb
 	m.cancelEnabled = true
 	m.mu.Unlock()
-	
+
 	C.enableCancel()
 }
 
 // DisableCancelKey stops monitoring for the cancel key
 func (m *Manager) DisableCancelKey() {
 	C.disableCancel()
-	
+
 	cancelCallbackMu.Lock()
 	cancelCallback = nil
 	cancelCallbackMu.Unlock()
-	
+
 	m.mu.Lock()
 	m.cancelEnabled = false
 	m.cancelCallback = nil
 	m.mu.Unlock()
+}
+
+// SetMediaControlEnabled is not supported on Linux.
+func (m *Manager) SetMediaControlEnabled(enabled bool, cb func()) {
+}
+
+// RefreshMediaControl is not supported on Linux.
+func (m *Manager) RefreshMediaControl() {
 }
 
 // GetHotkeyDisplayName returns the display name for a hotkey
@@ -306,6 +314,11 @@ func GetHotkeyDisplayName(hotkeyName string) string {
 
 // RequestAccessibilityPermissions is a no-op on Linux
 func RequestAccessibilityPermissions() bool {
+	return true
+}
+
+// RequestInputMonitoringPermissions is a no-op on Linux.
+func RequestInputMonitoringPermissions() bool {
 	return true
 }
 
@@ -331,7 +344,7 @@ func KeyNameToKeysym(name string) uint64 {
 		return 0xFFEB // XK_Super_L
 	case "capslock":
 		return 0xFFE5 // XK_Caps_Lock
-	
+
 	// Special keys
 	case "escape", "esc":
 		return 0xFF1B // XK_Escape
@@ -345,7 +358,7 @@ func KeyNameToKeysym(name string) uint64 {
 		return 0xFF08 // XK_BackSpace
 	case "delete":
 		return 0xFFFF // XK_Delete
-	
+
 	// Arrow keys
 	case "left", "arrowleft":
 		return 0xFF51 // XK_Left
@@ -355,7 +368,7 @@ func KeyNameToKeysym(name string) uint64 {
 		return 0xFF52 // XK_Up
 	case "down", "arrowdown":
 		return 0xFF54 // XK_Down
-	
+
 	// Function keys
 	case "f1":
 		return 0xFFBE
@@ -381,7 +394,7 @@ func KeyNameToKeysym(name string) uint64 {
 		return 0xFFC8
 	case "f12":
 		return 0xFFC9
-	
+
 	// Letter keys (lowercase)
 	case "a":
 		return 0x0061
@@ -435,7 +448,7 @@ func KeyNameToKeysym(name string) uint64 {
 		return 0x0079
 	case "z":
 		return 0x007A
-	
+
 	// Number keys
 	case "0":
 		return 0x0030
@@ -457,7 +470,7 @@ func KeyNameToKeysym(name string) uint64 {
 		return 0x0038
 	case "9":
 		return 0x0039
-	
+
 	default:
 		return 0xFFEA // Default to right alt
 	}

@@ -55,9 +55,13 @@ export function QuitApp():Promise<void>;
 
 export function RequestMicrophonePermission():Promise<string>;
 
+export function SetAirPodsControlEnabled(arg1:boolean):Promise<void>;
+
 export function SetAudioInputDevice(arg1:string):Promise<void>;
 
 export function SetAutoPaste(arg1:boolean):Promise<void>;
+
+export function SetAutoStopSilence(arg1:boolean):Promise<void>;
 
 export function SetCancelHotkey(arg1:string):Promise<void>;
 
@@ -66,6 +70,8 @@ export function SetModel(arg1:string):Promise<void>;
 export function SetOnboardingCompleted(arg1:boolean):Promise<void>;
 
 export function SetOpenAIKey(arg1:string):Promise<void>;
+
+export function SetPasteSubmit(arg1:boolean):Promise<void>;
 
 export function SetProvider(arg1:string):Promise<void>;
 
@@ -84,3 +90,5 @@ export function StartRecording():Promise<void>;
 export function StopRecording():Promise<void>;
 
 export function ToggleRecording():Promise<void>;
+
+export function ToggleRecordingFromMediaControl():Promise<void>;
