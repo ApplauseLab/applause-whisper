@@ -445,6 +445,11 @@ func RequestAccessibilityPermissions() bool {
 	return C.requestAccessibilityPermissions() != 0
 }
 
+// HasAccessibilityPermissions checks if accessibility permissions are granted (no prompt)
+func HasAccessibilityPermissions() bool {
+	return C.checkAccessibilityPermissionsWithPrompt(0) != 0
+}
+
 // KeyNameToCode converts a key name to a macOS key code
 func KeyNameToCode(name string) uint16 {
 	switch strings.ToLower(name) {

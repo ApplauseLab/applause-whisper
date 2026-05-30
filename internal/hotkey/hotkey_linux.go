@@ -309,6 +309,11 @@ func RequestAccessibilityPermissions() bool {
 	return true
 }
 
+// HasAccessibilityPermissions always returns true on Linux (no special permissions needed)
+func HasAccessibilityPermissions() bool {
+	return true
+}
+
 // KeyNameToKeysym converts a key name to an X11 KeySym
 func KeyNameToKeysym(name string) uint64 {
 	switch strings.ToLower(name) {

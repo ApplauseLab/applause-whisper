@@ -173,8 +173,9 @@ func (a *App) startup(ctx context.Context) {
 
 	a.openaiEngine = transcribe.NewOpenAIEngine(configManager.Get().OpenAIAPIKey)
 
-	// Request accessibility permissions (needed for escape key and auto-paste)
-	if !hotkey.RequestAccessibilityPermissions() {
+	// Check accessibility permissions without prompting.
+	// Onboarding handles the explicit permission request UX.
+	if !hotkey.HasAccessibilityPermissions() {
 		fmt.Println("WARNING: Accessibility permissions not granted!")
 		fmt.Println("Escape key cancel and auto-paste features will not work.")
 		fmt.Println("Please grant permissions in System Preferences > Privacy & Security > Accessibility")
@@ -896,6 +897,59 @@ func (a *App) GetCancelHotkeyDisplayName() string {
 	return hotkey.GetHotkeyDisplayName(a.GetCancelHotkey())
 }
 
+// CheckAccessibilityPermission checks if accessibility permissions are granted (no prompt)
+func (a *App) CheckAccessibilityPermission() bool {
+	return hotkey.HasAccessibilityPermissions()
+}
+
+// RequestAccessibilityPermission requests accessibility permissions and re-registers hotkey if granted
+func (a *App) RequestAccessibilityPermission() bool {
+	granted := hotkey.RequestAccessibilityPermissions()
+	if granted {
+		// Re-register hotkey now that we have permissions
+		if err := a.ReregisterHotkey(); err != nil {
+			fmt.Printf("Warning: Failed to re-register hotkey after permission grant: %v\n", err)
+		}
+	}
+	return granted
+}
+
+// ReregisterHotkey unregisters and re-registers the global hotkey
+// This is useful after permissions are granted or settings change
+func (a *App) ReregisterHotkey() error {
+	if a.hotkeyManager == nil {
+		return fmt.Errorf("hotkey manager not initialized")
+	}
+	
+	// Unregister current hotkey
+	a.hotkeyManager.Unregister()
+	
+	// Re-apply hotkey settings
+	hotkeyType := a.configManager.Get().RecordingHotkey
+	if hotkeyType == "" {
+		hotkeyType = models.DefaultRecordingHotkey()
+	}
+	a.hotkeyManager.SetHotkeyType(hotkeyType)
+	
+	cancelKey := a.configManager.Get().CancelHotkey
+	if cancelKey == "" {
+		cancelKey = "escape"
+	}
+	a.hotkeyManager.SetCancelKey(cancelKey)
+	
+	// Register the hotkey
+	if err := a.hotkeyManager.Register(func() {
+		a.ToggleRecording()
+	}); err != nil {
+		a.hotkeyEnabled = false
+		return fmt.Errorf("failed to register hotkey: %w", err)
+	}
+	
+	a.hotkeyEnabled = true
+	fmt.Printf("Hotkey re-registered: %s\n", hotkey.GetHotkeyDisplayName(hotkeyType))
+	return nil
+}
+
 // DownloadModel downloads a model
 func (a *App) DownloadModel(model string) error {
 	go func() {
@@ -978,32 +1032,10 @@ func (a *App) SetOnboardingCompleted(completed bool) error {
 
 // CheckMicrophonePermission checks if the app has microphone permission
 func (a *App) CheckMicrophonePermission() string {
-	// On macOS, we need to check the authorization status
-	// Returns: "granted", "denied", "undetermined"
-	// For now, we'll trigger a permission request by attempting to list devices
-	// The actual permission check requires calling macOS APIs
-	
-	// Try to list audio devices - this will trigger the permission prompt if needed
-	devices, err := audio.GetAudioInputDevices()
-	if err != nil {
-		return "denied"
-	}
-	if len(devices) > 0 {
-		return "granted"
-	}
-	return "undetermined"
+	return system.CheckMicrophonePermission()
 }
 
 // RequestMicrophonePermission requests microphone permission from the user
 func (a *App) RequestMicrophonePermission() string {
-	// Trigger permission request by attempting to access the microphone
-	// This will show the system permission dialog if not already granted
-	devices, err := audio.GetAudioInputDevices()
-	if err != nil {
-		return "denied"
-	}
-	if len(devices) > 0 {
-		return "granted"
-	}
-	return "undetermined"
+	return system.RequestMicrophonePermission()
 }

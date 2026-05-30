@@ -5,6 +5,8 @@ import {models} from '../models';
 
 export function CancelRecording():Promise<void>;
 
+export function CheckAccessibilityPermission():Promise<boolean>;
+
 export function CheckMicrophonePermission():Promise<string>;
 
 export function ClearHistory():Promise<void>;
@@ -53,7 +55,11 @@ export function Quit():Promise<void>;
 
 export function QuitApp():Promise<void>;
 
+export function RequestAccessibilityPermission():Promise<boolean>;
+
 export function RequestMicrophonePermission():Promise<string>;
+
+export function ReregisterHotkey():Promise<void>;
 
 export function SetAudioInputDevice(arg1:string):Promise<void>;
 
