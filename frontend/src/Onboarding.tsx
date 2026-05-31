@@ -62,6 +62,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
   const [hotkeyName, setHotkeyName] = useState<string>('Right Option');
   const [platform, setPlatform] = useState<string>('darwin');
   const [hotkeyTestState, setHotkeyTestState] = useState<HotkeyTestState>('waiting');
+  const [testTranscript, setTestTranscript] = useState<string>('');
   const hotkeyTestStateRef = useRef<HotkeyTestState>('waiting');
 
   useEffect(() => {
@@ -216,6 +217,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
     if (step === 'hotkeyTest') {
       // Reset test state when entering this step
       setHotkeyTestState('waiting');
+      setTestTranscript('');
       hotkeyTestStateRef.current = 'waiting';
       
       // Make sure hotkey is registered
@@ -228,6 +230,10 @@ export function Onboarding({ onComplete }: OnboardingProps) {
         } else if (state.state === 'ready' && hotkeyTestStateRef.current === 'recording') {
           setHotkeyTestState('success');
           hotkeyTestStateRef.current = 'success';
+          // Capture the transcript from the test recording
+          if (state.lastTranscript) {
+            setTestTranscript(state.lastTranscript);
+          }
         }
       };
       
@@ -675,48 +681,31 @@ export function Onboarding({ onComplete }: OnboardingProps) {
 
   const renderAccessSuccess = () => {
     return (
-      <div className="onboarding-step success-celebration-step access-success">
-        {/* Big celebration with pixel-art style person */}
-        <div className="celebration-illustration big">
-          <div className="celebration-character">
-            {/* Pixel-art style celebrating figure */}
-            <svg width="160" height="160" viewBox="0 0 64 64" fill="none" className="pixel-character">
-              {/* Head */}
-              <rect x="26" y="8" width="12" height="12" fill="var(--accent)" rx="2" />
-              {/* Body */}
-              <rect x="24" y="20" width="16" height="16" fill="var(--accent)" rx="1" />
-              {/* Left arm raised */}
-              <rect x="14" y="12" width="10" height="4" fill="var(--accent)" rx="1" />
-              <rect x="12" y="8" width="4" height="6" fill="var(--accent)" rx="1" />
-              {/* Right arm raised */}
-              <rect x="40" y="12" width="10" height="4" fill="var(--accent)" rx="1" />
-              <rect x="48" y="8" width="4" height="6" fill="var(--accent)" rx="1" />
-              {/* Legs */}
-              <rect x="26" y="36" width="5" height="14" fill="var(--accent)" rx="1" />
-              <rect x="33" y="36" width="5" height="14" fill="var(--accent)" rx="1" />
-              {/* Feet */}
-              <rect x="24" y="50" width="7" height="4" fill="var(--accent)" rx="1" />
-              <rect x="33" y="50" width="7" height="4" fill="var(--accent)" rx="1" />
+      <div className="onboarding-step success-celebration-step">
+        {/* Same checkmark + confetti as mic success */}
+        <div className="celebration-illustration">
+          <div className="celebration-icon">
+            <svg width="80" height="80" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" fill="rgba(48, 209, 88, 0.15)" />
+              <path d="M8 12l3 3 5-6" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
-          {/* More confetti */}
-          <div className="confetti-container big">
+          {/* Confetti particles */}
+          <div className="confetti-container">
             <div className="confetti c1"></div>
             <div className="confetti c2"></div>
             <div className="confetti c3"></div>
             <div className="confetti c4"></div>
             <div className="confetti c5"></div>
             <div className="confetti c6"></div>
-            <div className="confetti c7"></div>
-            <div className="confetti c8"></div>
           </div>
         </div>
         
-        <h2 className="celebration-title big">All permissions granted!</h2>
+        <h2 className="celebration-title">All permissions granted!</h2>
         <p className="celebration-subtitle">You're ready to start using Yap</p>
         
         <div className="step-actions">
-          <button className="primary-button large" onClick={() => setStep('hotkeyTest')}>
+          <button className="primary-button" onClick={() => setStep('hotkeyTest')}>
             Continue
           </button>
         </div>
@@ -765,6 +754,12 @@ export function Onboarding({ onComplete }: OnboardingProps) {
                 </svg>
               </div>
               <div className="hotkey-test-label">Hotkey is working!</div>
+              {testTranscript && (
+                <div className="hotkey-test-transcript">
+                  <span className="transcript-label">You said:</span>
+                  <p className="transcript-text">"{testTranscript}"</p>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -800,24 +795,43 @@ export function Onboarding({ onComplete }: OnboardingProps) {
         </svg>
       </div>
       <h2 className="ready-title">You're All Set!</h2>
-      <p className="ready-subtitle">Here's how to use Yap</p>
+      <p className="ready-subtitle">Here's a quick tour of Yap</p>
       
-      <div className="hotkey-demo">
-        <div className="hotkey-visual">
-          <kbd className="hotkey-key">{hotkeyName}</kbd>
+      <div className="app-tour">
+        <div className="tour-item">
+          <div className="tour-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+              <polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+          </div>
+          <div className="tour-text">
+            <strong>Home</strong>
+            <span>Your dashboard with recording stats</span>
+          </div>
         </div>
-        <div className="hotkey-instructions">
-          <div className="instruction">
-            <span className="instruction-num">1</span>
-            <span>Press <strong>{hotkeyName}</strong> to start recording</span>
+        <div className="tour-item">
+          <div className="tour-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
           </div>
-          <div className="instruction">
-            <span className="instruction-num">2</span>
-            <span>Speak clearly into your microphone</span>
+          <div className="tour-text">
+            <strong>History</strong>
+            <span>View and manage past transcriptions</span>
           </div>
-          <div className="instruction">
-            <span className="instruction-num">3</span>
-            <span>Press <strong>{hotkeyName}</strong> again to transcribe and paste</span>
+        </div>
+        <div className="tour-item">
+          <div className="tour-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </div>
+          <div className="tour-text">
+            <strong>Settings</strong>
+            <span>Customize hotkey, model, and more</span>
           </div>
         </div>
       </div>

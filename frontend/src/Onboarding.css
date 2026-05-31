@@ -618,6 +618,62 @@
   margin-bottom: 28px;
 }
 
+/* App tour - Ready step */
+.app-tour {
+  width: 100%;
+  background: var(--bg-card);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tour-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  transition: background 0.15s ease;
+}
+
+.tour-item:hover {
+  background: var(--bg-hover);
+}
+
+.tour-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--bg-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.tour-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+
+.tour-text strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tour-text span {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Legacy hotkey demo styles (keeping for potential future use) */
 .hotkey-demo {
   width: 100%;
   background: var(--bg-card);
@@ -895,6 +951,37 @@
   color: var(--text-muted);
 }
 
+/* Hotkey test transcript display */
+.hotkey-test-transcript {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: rgba(48, 209, 88, 0.08);
+  border-radius: 8px;
+  max-width: 320px;
+  animation: fadeInUp 0.3s ease-out;
+}
+
+.hotkey-test-transcript .transcript-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.hotkey-test-transcript .transcript-text {
+  font-size: 14px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  margin: 0;
+  font-style: italic;
+  word-break: break-word;
+  max-height: 80px;
+  overflow-y: auto;
+}
+
 /* ========================================
    NEW PERMISSION SCREENS
    ======================================== */
@@ -973,42 +1060,12 @@
   }
 }
 
-.celebration-illustration.big {
-  margin-bottom: 32px;
-}
-
-.celebration-character {
-  animation: bounce 0.6s ease-out;
-}
-
-@keyframes bounce {
-  0% {
-    transform: translateY(20px);
-    opacity: 0;
-  }
-  50% {
-    transform: translateY(-10px);
-  }
-  100% {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-.pixel-character {
-  filter: drop-shadow(0 4px 12px rgba(0, 255, 78, 0.3));
-}
-
 .celebration-title {
   font-size: 24px;
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 8px;
   animation: fadeInUp 0.4s ease-out 0.2s both;
-}
-
-.celebration-title.big {
-  font-size: 28px;
 }
 
 .celebration-subtitle {
@@ -1035,10 +1092,6 @@
   inset: -20px;
   pointer-events: none;
   overflow: visible;
-}
-
-.confetti-container.big {
-  inset: -40px;
 }
 
 .confetti {
@@ -1083,18 +1136,6 @@
   background: #9b59b6;
   left: 70%;
   animation-delay: 0.12s;
-}
-
-.confetti.c7 {
-  background: #f39c12;
-  left: 15%;
-  animation-delay: 0.18s;
-}
-
-.confetti.c8 {
-  background: #1abc9c;
-  left: 85%;
-  animation-delay: 0.22s;
 }
 
 @keyframes confettiFall {
@@ -1353,12 +1394,4 @@
 
 .mockup-toggle.on::after {
   transform: translateX(14px);
-}
-
-/* Access Success specific styles */
-.access-success .celebration-illustration {
-  min-height: 180px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
