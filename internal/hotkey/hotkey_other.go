@@ -86,6 +86,11 @@ func RequestAccessibilityPermissions() bool {
 	return true
 }
 
+// HasAccessibilityPermissions always returns true on unsupported platforms
+func HasAccessibilityPermissions() bool {
+	return true
+}
+
 // KeyNameToDisplayName converts a key name to a display-friendly name
 func KeyNameToDisplayName(name string) string {
 	switch strings.ToLower(name) {

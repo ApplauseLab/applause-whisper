@@ -13,6 +13,7 @@ package hotkey
 static id gEventMonitor = nil;
 static id gKeyEventMonitor = nil;
 static id gLocalKeyEventMonitor = nil;
+static id gLocalFlagsMonitor = nil;
 static BOOL gHotkeyKeyDown = NO;
 static BOOL gCancelKeyEnabled = NO;
 static UInt16 gCurrentHotkeyCode = 0x3D;  // Default: Right Option
@@ -122,6 +123,10 @@ static void stopAllMonitoring(void) {
         [NSEvent removeMonitor:gLocalKeyEventMonitor];
         gLocalKeyEventMonitor = nil;
     }
+    if (gLocalFlagsMonitor != nil) {
+        [NSEvent removeMonitor:gLocalFlagsMonitor];
+        gLocalFlagsMonitor = nil;
+    }
     gHotkeyKeyDown = NO;
     gCancelKeyEnabled = NO;
 }
@@ -179,7 +184,7 @@ static void startMonitoring(void) {
             }
         }];
     
-    // Local monitor for when this app has focus
+    // Local monitor for regular keys when this app has focus
     gLocalKeyEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
         handler:^NSEvent *(NSEvent *event) {
             UInt16 keyCode = [event keyCode];
@@ -194,6 +199,41 @@ static void startMonitoring(void) {
             if (gCancelKeyEnabled && !gCancelIsModifier && keyCode == gCurrentCancelCode) {
                 goCancelPressed();
                 return nil; // Consume event
+            }
+            
+            return event;
+        }];
+    
+    // Also add local monitor for modifier keys (flagsChanged) when app has focus
+    // This ensures modifier hotkeys work even when the app window is focused
+    if (gLocalFlagsMonitor != nil) {
+        [NSEvent removeMonitor:gLocalFlagsMonitor];
+        gLocalFlagsMonitor = nil;
+    }
+    gLocalFlagsMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged
+        handler:^NSEvent *(NSEvent *event) {
+            UInt16 keyCode = [event keyCode];
+            NSEventModifierFlags flags = [event modifierFlags];
+            
+            // Check hotkey (if it's a modifier)
+            if (gHotkeyIsModifier && keyCode == gCurrentHotkeyCode) {
+                NSEventModifierFlags modFlag = getModifierFlag(keyCode);
+                if (flags & modFlag) {
+                    if (!gHotkeyKeyDown) {
+                        gHotkeyKeyDown = YES;
+                        goHotkeyPressed();
+                    }
+                } else {
+                    gHotkeyKeyDown = NO;
+                }
+            }
+            
+            // Check cancel key (if it's a modifier)
+            if (gCancelKeyEnabled && gCancelIsModifier && keyCode == gCurrentCancelCode) {
+                NSEventModifierFlags modFlag = getModifierFlag(keyCode);
+                if (flags & modFlag) {
+                    goCancelPressed();
+                }
             }
             
             return event;
@@ -403,6 +443,11 @@ func GetHotkeyDisplayName(hotkeyName string) string {
 // RequestAccessibilityPermissions prompts user for accessibility permissions
 func RequestAccessibilityPermissions() bool {
 	return C.requestAccessibilityPermissions() != 0
+}
+
+// HasAccessibilityPermissions checks if accessibility permissions are granted (no prompt)
+func HasAccessibilityPermissions() bool {
+	return C.checkAccessibilityPermissionsWithPrompt(0) != 0
 }
 
 // KeyNameToCode converts a key name to a macOS key code

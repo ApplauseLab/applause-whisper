@@ -6,6 +6,10 @@ export function CancelRecording() {
   return window['go']['main']['App']['CancelRecording']();
 }
 
+export function CheckAccessibilityPermission() {
+  return window['go']['main']['App']['CheckAccessibilityPermission']();
+}
+
 export function CheckMicrophonePermission() {
   return window['go']['main']['App']['CheckMicrophonePermission']();
 }
@@ -102,8 +106,16 @@ export function QuitApp() {
   return window['go']['main']['App']['QuitApp']();
 }
 
+export function RequestAccessibilityPermission() {
+  return window['go']['main']['App']['RequestAccessibilityPermission']();
+}
+
 export function RequestMicrophonePermission() {
   return window['go']['main']['App']['RequestMicrophonePermission']();
+}
+
+export function ReregisterHotkey() {
+  return window['go']['main']['App']['ReregisterHotkey']();
 }
 
 export function SetAudioInputDevice(arg1) {

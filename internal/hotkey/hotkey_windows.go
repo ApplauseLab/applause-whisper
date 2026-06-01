@@ -314,6 +314,11 @@ func RequestAccessibilityPermissions() bool {
 	return true
 }
 
+// HasAccessibilityPermissions always returns true on Windows (no special permissions needed)
+func HasAccessibilityPermissions() bool {
+	return true
+}
+
 // KeyNameToCode converts a key name to a Windows virtual key code
 func KeyNameToCode(name string) uint32 {
 	switch strings.ToLower(name) {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import './Onboarding.css';
 import appIcon from './assets/appicon.png';
 import {
@@ -9,8 +9,12 @@ import {
   SetOpenAIKey,
   CheckMicrophonePermission,
   RequestMicrophonePermission,
+  CheckAccessibilityPermission,
+  RequestAccessibilityPermission,
+  ReregisterHotkey,
   SetOnboardingCompleted,
   GetRecordingHotkeyDisplayName,
+  GetPlatform,
 } from '../wailsjs/go/main/App';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
 
@@ -29,12 +33,20 @@ interface DownloadProgress {
   progress: number;
 }
 
+interface AppState {
+  state: string;
+  recordingTime: number;
+  lastTranscript: string;
+  error: string;
+}
+
 interface OnboardingProps {
   onComplete: () => void;
 }
 
-type Step = 'welcome' | 'provider' | 'model' | 'download' | 'apikey' | 'permissions' | 'ready';
+type Step = 'welcome' | 'provider' | 'model' | 'download' | 'apikey' | 'micRequest' | 'micSuccess' | 'accessRequest' | 'accessSuccess' | 'hotkeyTest' | 'ready';
 type Provider = 'local' | 'openai';
+type HotkeyTestState = 'waiting' | 'recording' | 'success';
 
 export function Onboarding({ onComplete }: OnboardingProps) {
   const [step, setStep] = useState<Step>('welcome');
@@ -45,8 +57,13 @@ export function Onboarding({ onComplete }: OnboardingProps) {
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [permissionStatus, setPermissionStatus] = useState<string>('undetermined');
+  const [micPermissionStatus, setMicPermissionStatus] = useState<string>('undetermined');
+  const [accessibilityStatus, setAccessibilityStatus] = useState<string>('undetermined');
   const [hotkeyName, setHotkeyName] = useState<string>('Right Option');
+  const [platform, setPlatform] = useState<string>('darwin');
+  const [hotkeyTestState, setHotkeyTestState] = useState<HotkeyTestState>('waiting');
+  const [testTranscript, setTestTranscript] = useState<string>('');
+  const hotkeyTestStateRef = useRef<HotkeyTestState>('waiting');
 
   useEffect(() => {
     // Load models
@@ -64,6 +81,11 @@ export function Onboarding({ onComplete }: OnboardingProps) {
       setHotkeyName(name);
     });
 
+    // Get platform
+    GetPlatform().then((p: string) => {
+      setPlatform(p);
+    });
+
     // Set up event listeners for download progress
     const progressHandler = (progress: DownloadProgress) => {
       setDownloadProgress(progress);
@@ -76,8 +98,8 @@ export function Onboarding({ onComplete }: OnboardingProps) {
       GetModels().then((modelList: ModelInfo[]) => {
         setModels(modelList);
       });
-      // Move to permissions step
-      setStep('permissions');
+      // Move to mic permission request step
+      setStep('micRequest');
     };
 
     const errorHandler = (data: { model: string; error: string }) => {
@@ -116,15 +138,15 @@ export function Onboarding({ onComplete }: OnboardingProps) {
     }
     setApiKeyError(null);
     await SetOpenAIKey(apiKey);
-    setStep('permissions');
+    setStep('micRequest');
   }, [apiKey]);
 
   const handleModelSelect = useCallback(async () => {
     await SetModel(selectedModel);
     const model = models.find(m => m.name === selectedModel);
     if (model?.downloaded) {
-      // Model already downloaded, skip to permissions
-      setStep('permissions');
+      // Model already downloaded, skip to mic permission request
+      setStep('micRequest');
     } else {
       // Start download
       setStep('download');
@@ -139,23 +161,88 @@ export function Onboarding({ onComplete }: OnboardingProps) {
   }, [selectedModel]);
 
   const handleSkipDownload = useCallback(() => {
-    setStep('permissions');
+    setStep('micRequest');
   }, []);
 
-  const handleCheckPermission = useCallback(async () => {
+  const handleCheckMicPermission = useCallback(async () => {
     const status = await CheckMicrophonePermission();
-    setPermissionStatus(status);
+    setMicPermissionStatus(status);
   }, []);
 
-  const handleRequestPermission = useCallback(async () => {
+  const handleRequestMicPermission = useCallback(async () => {
     const status = await RequestMicrophonePermission();
-    setPermissionStatus(status);
+    setMicPermissionStatus(status);
+  }, []);
+
+  const handleCheckAccessibilityPermission = useCallback(async () => {
+    const granted = await CheckAccessibilityPermission();
+    setAccessibilityStatus(granted ? 'granted' : 'undetermined');
+  }, []);
+
+  const handleRequestAccessibilityPermission = useCallback(async () => {
+    const granted = await RequestAccessibilityPermission();
+    setAccessibilityStatus(granted ? 'granted' : 'denied');
+    // If granted, the hotkey is automatically re-registered by the backend
   }, []);
 
   const handleComplete = useCallback(async () => {
     await SetOnboardingCompleted(true);
     onComplete();
   }, [onComplete]);
+
+  // Check mic permission when entering mic request step
+  useEffect(() => {
+    if (step === 'micRequest') {
+      handleCheckMicPermission();
+    }
+  }, [step, handleCheckMicPermission]);
+
+  // Poll for accessibility permission when on access request step
+  useEffect(() => {
+    if (step === 'accessRequest') {
+      handleCheckAccessibilityPermission();
+      const interval = setInterval(async () => {
+        const granted = await CheckAccessibilityPermission();
+        if (granted) {
+          setAccessibilityStatus('granted');
+          setStep('accessSuccess');
+        }
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [step, handleCheckAccessibilityPermission]);
+
+  // Handle hotkey test - listen for state changes
+  useEffect(() => {
+    if (step === 'hotkeyTest') {
+      // Reset test state when entering this step
+      setHotkeyTestState('waiting');
+      setTestTranscript('');
+      hotkeyTestStateRef.current = 'waiting';
+      
+      // Make sure hotkey is registered
+      ReregisterHotkey().catch(console.error);
+      
+      const stateHandler = (state: AppState) => {
+        if (state.state === 'recording' && hotkeyTestStateRef.current === 'waiting') {
+          setHotkeyTestState('recording');
+          hotkeyTestStateRef.current = 'recording';
+        } else if (state.state === 'ready' && hotkeyTestStateRef.current === 'recording') {
+          setHotkeyTestState('success');
+          hotkeyTestStateRef.current = 'success';
+          // Capture the transcript from the test recording
+          if (state.lastTranscript) {
+            setTestTranscript(state.lastTranscript);
+          }
+        }
+      };
+      
+      EventsOn('stateChanged', stateHandler);
+      return () => {
+        EventsOff('stateChanged');
+      };
+    }
+  }, [step]);
 
   const renderWelcome = () => (
     <div className="onboarding-step welcome-step">
@@ -420,82 +507,281 @@ export function Onboarding({ onComplete }: OnboardingProps) {
     );
   };
 
-  const renderPermissions = () => (
-    <div className="onboarding-step permissions-step">
-      <div className="step-header">
-        <div className="permissions-icon">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-            <line x1="12" y1="19" x2="12" y2="22"/>
+  // Handle mic permission request and auto-advance on grant
+  const handleMicPermissionRequest = useCallback(async () => {
+    const status = await RequestMicrophonePermission();
+    setMicPermissionStatus(status);
+    if (status === 'granted') {
+      setStep('micSuccess');
+    }
+  }, []);
+
+  const renderMicRequest = () => {
+    // If already granted, auto-advance
+    if (micPermissionStatus === 'granted') {
+      // Use effect will handle this, but also allow manual continue
+    }
+    
+    return (
+      <div className="onboarding-step mic-request-step">
+        {/* Pixel-art microphone illustration */}
+        <div className="permission-illustration">
+          <svg width="120" height="120" viewBox="0 0 24 24" fill="none" className="pixel-mic-icon">
+            {/* Microphone body - pixel art style */}
+            <rect x="10" y="2" width="4" height="10" rx="2" fill="var(--accent)" />
+            {/* Microphone stand */}
+            <path d="M7 10v2a5 5 0 0 0 10 0v-2" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" fill="none" />
+            <line x1="12" y1="17" x2="12" y2="21" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" />
+            <line x1="9" y1="21" x2="15" y2="21" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" />
+            {/* Sound waves */}
+            <path d="M19 8c1 1 1.5 2 1.5 4s-.5 3-1.5 4" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" fill="none" opacity="0.6" />
+            <path d="M5 8c-1 1-1.5 2-1.5 4s.5 3 1.5 4" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" fill="none" opacity="0.6" />
           </svg>
         </div>
-        <h2>Microphone Access</h2>
-        <p>Yap needs microphone access to transcribe your voice.</p>
+        
+        <div className="step-header">
+          <h2>Yap needs your microphone</h2>
+          <p>To transcribe your voice, Yap needs access to your microphone. Click below and select "Allow" in the system dialog.</p>
+        </div>
+        
+        <div className="step-actions">
+          <button className="secondary-button" onClick={() => setStep(selectedProvider === 'openai' ? 'apikey' : 'model')}>
+            Back
+          </button>
+          {micPermissionStatus === 'granted' ? (
+            <button className="primary-button" onClick={() => setStep('micSuccess')}>
+              Continue
+            </button>
+          ) : (
+            <button className="primary-button" onClick={handleMicPermissionRequest}>
+              Allow Microphone
+            </button>
+          )}
+        </div>
       </div>
-      
-      <div className="permission-status">
-        {permissionStatus === 'granted' ? (
-          <div className="status-card granted">
-            <div className="status-icon">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                <polyline points="22 4 12 14.01 9 11.01"/>
-              </svg>
-            </div>
-            <div className="status-text">
-              <strong>Access Granted</strong>
-              <span>Yap can now listen to your voice</span>
-            </div>
+    );
+  };
+
+  const renderMicSuccess = () => {
+    const needsAccessibility = platform === 'darwin';
+    
+    return (
+      <div className="onboarding-step success-celebration-step">
+        {/* Pixel-art celebration */}
+        <div className="celebration-illustration">
+          <div className="celebration-icon">
+            <svg width="80" height="80" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" fill="rgba(48, 209, 88, 0.15)" />
+              <path d="M8 12l3 3 5-6" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </div>
-        ) : permissionStatus === 'denied' ? (
-          <div className="status-card denied">
-            <div className="status-icon">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
-              </svg>
-            </div>
-            <div className="status-text">
-              <strong>Access Denied</strong>
-              <span>Please enable microphone access in System Preferences &gt; Privacy &gt; Microphone</span>
-            </div>
+          {/* Confetti particles */}
+          <div className="confetti-container">
+            <div className="confetti c1"></div>
+            <div className="confetti c2"></div>
+            <div className="confetti c3"></div>
+            <div className="confetti c4"></div>
+            <div className="confetti c5"></div>
+            <div className="confetti c6"></div>
           </div>
-        ) : (
-          <div className="status-card pending">
-            <div className="status-icon">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="12" y1="8" x2="12" y2="12"/>
-                <line x1="12" y1="16" x2="12.01" y2="16"/>
-              </svg>
-            </div>
-            <div className="status-text">
-              <strong>Permission Required</strong>
-              <span>Click the button below to grant access</span>
-            </div>
-          </div>
-        )}
-      </div>
-      
-      <div className="step-actions">
-        <button className="secondary-button" onClick={() => setStep('model')}>
-          Back
-        </button>
-        {permissionStatus === 'granted' ? (
-          <button className="primary-button" onClick={() => setStep('ready')}>
+        </div>
+        
+        <h2 className="celebration-title">Microphone access granted!</h2>
+        <p className="celebration-subtitle">
+          {needsAccessibility ? "One more permission to go..." : "You're all set!"}
+        </p>
+        
+        <div className="step-actions">
+          <button 
+            className="primary-button" 
+            onClick={() => setStep(needsAccessibility ? 'accessRequest' : 'hotkeyTest')}
+          >
             Continue
           </button>
-        ) : (
-          <>
-            <button className="secondary-button" onClick={() => setStep('ready')}>
-              Skip
-            </button>
-            <button className="primary-button" onClick={handleRequestPermission}>
-              {permissionStatus === 'denied' ? 'Check Again' : 'Grant Access'}
-            </button>
-          </>
+        </div>
+      </div>
+    );
+  };
+
+  const renderAccessRequest = () => {
+    return (
+      <div className="onboarding-step access-request-step">
+        {/* macOS System Preferences mockup */}
+        <div className="system-prefs-mockup">
+          <div className="mockup-window">
+            {/* Window chrome */}
+            <div className="mockup-titlebar">
+              <div className="traffic-lights">
+                <span className="light red"></span>
+                <span className="light yellow"></span>
+                <span className="light green"></span>
+              </div>
+              <span className="mockup-title">Privacy & Security</span>
+            </div>
+            
+            {/* Content area */}
+            <div className="mockup-content">
+              {/* Sidebar */}
+              <div className="mockup-sidebar">
+                <div className="sidebar-item">
+                  <div className="sidebar-icon"></div>
+                </div>
+                <div className="sidebar-item active">
+                  <div className="sidebar-icon accessibility"></div>
+                </div>
+                <div className="sidebar-item">
+                  <div className="sidebar-icon"></div>
+                </div>
+              </div>
+              
+              {/* Main content */}
+              <div className="mockup-main">
+                <div className="mockup-section-title">Accessibility</div>
+                <div className="mockup-app-list">
+                  <div className="mockup-app-row highlighted">
+                    <img src={appIcon} alt="Yap" className="mockup-app-icon" />
+                    <span className="mockup-app-name">Yap</span>
+                    <div className="mockup-toggle on"></div>
+                  </div>
+                  <div className="mockup-app-row">
+                    <div className="mockup-app-icon placeholder"></div>
+                    <span className="mockup-app-name muted">Other App</span>
+                    <div className="mockup-toggle"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="step-header">
+          <h2>Grant Accessibility Access</h2>
+          <p>Yap needs Accessibility access to detect your hotkey even when other apps are focused.</p>
+        </div>
+        
+        <p className="access-instructions">
+          Click the button below to open System Settings, then toggle <strong>Yap</strong> on in the Accessibility list.
+        </p>
+        
+        <div className="step-actions">
+          <button className="secondary-button" onClick={() => setStep('micSuccess')}>
+            Back
+          </button>
+          <button className="primary-button" onClick={handleRequestAccessibilityPermission}>
+            Open Accessibility Settings
+          </button>
+        </div>
+        
+        {accessibilityStatus === 'granted' && (
+          <p className="permission-detected">Permission detected! Advancing...</p>
         )}
+      </div>
+    );
+  };
+
+  const renderAccessSuccess = () => {
+    return (
+      <div className="onboarding-step success-celebration-step">
+        {/* Same checkmark + confetti as mic success */}
+        <div className="celebration-illustration">
+          <div className="celebration-icon">
+            <svg width="80" height="80" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" fill="rgba(48, 209, 88, 0.15)" />
+              <path d="M8 12l3 3 5-6" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          {/* Confetti particles */}
+          <div className="confetti-container">
+            <div className="confetti c1"></div>
+            <div className="confetti c2"></div>
+            <div className="confetti c3"></div>
+            <div className="confetti c4"></div>
+            <div className="confetti c5"></div>
+            <div className="confetti c6"></div>
+          </div>
+        </div>
+        
+        <h2 className="celebration-title">All permissions granted!</h2>
+        <p className="celebration-subtitle">You're ready to start using Yap</p>
+        
+        <div className="step-actions">
+          <button className="primary-button" onClick={() => setStep('hotkeyTest')}>
+            Continue
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderHotkeyTest = () => (
+    <div className="onboarding-step hotkey-test-step">
+      <div className="step-header">
+        <h2>Test Your Hotkey</h2>
+        <p>Let's make sure the hotkey is working correctly.</p>
+      </div>
+      
+      <div className="hotkey-test-area">
+        <div className={`hotkey-test-visual ${hotkeyTestState}`}>
+          {hotkeyTestState === 'waiting' && (
+            <>
+              <div className="hotkey-test-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <rect x="4" y="4" width="16" height="16" rx="2"/>
+                  <path d="M9 9h6v6H9z"/>
+                </svg>
+              </div>
+              <div className="hotkey-test-label">Press <kbd>{hotkeyName}</kbd> to start recording</div>
+            </>
+          )}
+          {hotkeyTestState === 'recording' && (
+            <>
+              <div className="hotkey-test-icon recording">
+                <div className="recording-pulse"></div>
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                </svg>
+              </div>
+              <div className="hotkey-test-label">Recording... Press <kbd>{hotkeyName}</kbd> again to stop</div>
+            </>
+          )}
+          {hotkeyTestState === 'success' && (
+            <>
+              <div className="hotkey-test-icon success">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                  <polyline points="22 4 12 14.01 9 11.01"/>
+                </svg>
+              </div>
+              <div className="hotkey-test-label">Hotkey is working!</div>
+              {testTranscript && (
+                <div className="hotkey-test-transcript">
+                  <span className="transcript-label">You said:</span>
+                  <p className="transcript-text">"{testTranscript}"</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {hotkeyTestState === 'waiting' && (
+        <div className="hotkey-test-hint">
+          <p>Having trouble? Make sure you granted Accessibility permission.</p>
+        </div>
+      )}
+      
+      <div className="step-actions">
+        <button className="secondary-button" onClick={() => setStep(platform === 'darwin' ? 'accessSuccess' : 'micSuccess')}>
+          Back
+        </button>
+        <button 
+          className="primary-button" 
+          onClick={() => setStep('ready')}
+          disabled={hotkeyTestState !== 'success'}
+        >
+          Continue
+        </button>
       </div>
     </div>
   );
@@ -509,24 +795,43 @@ export function Onboarding({ onComplete }: OnboardingProps) {
         </svg>
       </div>
       <h2 className="ready-title">You're All Set!</h2>
-      <p className="ready-subtitle">Here's how to use Yap</p>
+      <p className="ready-subtitle">Here's a quick tour of Yap</p>
       
-      <div className="hotkey-demo">
-        <div className="hotkey-visual">
-          <kbd className="hotkey-key">{hotkeyName}</kbd>
+      <div className="app-tour">
+        <div className="tour-item">
+          <div className="tour-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+              <polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+          </div>
+          <div className="tour-text">
+            <strong>Home</strong>
+            <span>Your dashboard with recording stats</span>
+          </div>
         </div>
-        <div className="hotkey-instructions">
-          <div className="instruction">
-            <span className="instruction-num">1</span>
-            <span>Press <strong>{hotkeyName}</strong> to start recording</span>
+        <div className="tour-item">
+          <div className="tour-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
           </div>
-          <div className="instruction">
-            <span className="instruction-num">2</span>
-            <span>Speak clearly into your microphone</span>
+          <div className="tour-text">
+            <strong>History</strong>
+            <span>View and manage past transcriptions</span>
           </div>
-          <div className="instruction">
-            <span className="instruction-num">3</span>
-            <span>Press <strong>{hotkeyName}</strong> again to transcribe and paste</span>
+        </div>
+        <div className="tour-item">
+          <div className="tour-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </div>
+          <div className="tour-text">
+            <strong>Settings</strong>
+            <span>Customize hotkey, model, and more</span>
           </div>
         </div>
       </div>
@@ -546,9 +851,11 @@ export function Onboarding({ onComplete }: OnboardingProps) {
             {/* Provider selection */}
             <div className={`dot ${step === 'provider' ? 'active' : 'completed'}`} />
             {/* Model/API key (depends on provider) */}
-            <div className={`dot ${['model', 'download', 'apikey'].includes(step) ? 'active' : ['permissions', 'ready'].includes(step) ? 'completed' : ''}`} />
-            {/* Permissions */}
-            <div className={`dot ${step === 'permissions' ? 'active' : step === 'ready' ? 'completed' : ''}`} />
+            <div className={`dot ${['model', 'download', 'apikey'].includes(step) ? 'active' : ['micRequest', 'micSuccess', 'accessRequest', 'accessSuccess', 'hotkeyTest', 'ready'].includes(step) ? 'completed' : ''}`} />
+            {/* Permissions (mic + accessibility) */}
+            <div className={`dot ${['micRequest', 'micSuccess', 'accessRequest', 'accessSuccess'].includes(step) ? 'active' : ['hotkeyTest', 'ready'].includes(step) ? 'completed' : ''}`} />
+            {/* Hotkey Test */}
+            <div className={`dot ${step === 'hotkeyTest' ? 'active' : step === 'ready' ? 'completed' : ''}`} />
             {/* Ready */}
             <div className={`dot ${step === 'ready' ? 'active' : ''}`} />
           </div>
@@ -560,7 +867,11 @@ export function Onboarding({ onComplete }: OnboardingProps) {
         {step === 'model' && renderModelSelection()}
         {step === 'download' && renderDownload()}
         {step === 'apikey' && renderApiKeyInput()}
-        {step === 'permissions' && renderPermissions()}
+        {step === 'micRequest' && renderMicRequest()}
+        {step === 'micSuccess' && renderMicSuccess()}
+        {step === 'accessRequest' && renderAccessRequest()}
+        {step === 'accessSuccess' && renderAccessSuccess()}
+        {step === 'hotkeyTest' && renderHotkeyTest()}
         {step === 'ready' && renderReady()}
       </div>
     </div>
