@@ -27,6 +27,11 @@ import {
   GetStats,
   GetRecordingHotkey,
   SetRecordingHotkey,
+  GetBrainCacheHotkey,
+  SetBrainCacheHotkey,
+  GetObsidianVaultPath,
+  SetObsidianVaultPath,
+  GetBrainCacheDestinationPreview,
   GetCancelHotkey,
   SetCancelHotkey,
   GetPlatform,
@@ -61,6 +66,8 @@ interface Config {
   audioInputDevice?: string;
   autoPaste: boolean;
   soundEnabled?: boolean;
+  brainCacheHotkey?: string;
+  obsidianVaultPath?: string;
 }
 
 interface HistoryItem {
@@ -95,6 +102,10 @@ interface UsageStats {
 
 type Page = 'home' | 'settings' | 'history';
 
+const getErrorMessage = (error: unknown): string => {
+  return error instanceof Error ? error.message : String(error);
+};
+
 function App() {
   const [appState, setAppState] = useState<AppState>({
     state: 'ready',
@@ -127,12 +138,17 @@ function App() {
     totalWords: 0,
   });
   const [currentHotkey, setCurrentHotkey] = useState<string>('rightoption');
+  const [brainCacheHotkey, setBrainCacheHotkeyState] = useState<string>('');
+  const [obsidianVaultPath, setObsidianVaultPathState] = useState<string>('');
+  const [brainCacheDestination, setBrainCacheDestination] = useState<string>('Yap/BrainCache YYYY-MM-DD.md');
   const [cancelHotkey, setCancelHotkey] = useState<string>('escape');
   const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null);
   const [platform, setPlatform] = useState<string>('darwin');
   const [isCapturingHotkey, setIsCapturingHotkey] = useState<boolean>(false);
+  const [isCapturingBrainCacheKey, setIsCapturingBrainCacheKey] = useState<boolean>(false);
   const [isCapturingCancelKey, setIsCapturingCancelKey] = useState<boolean>(false);
   const hotkeyInputRef = useRef<HTMLDivElement>(null);
+  const brainCacheKeyInputRef = useRef<HTMLDivElement>(null);
   const cancelKeyInputRef = useRef<HTMLDivElement>(null);
 
   // Check if onboarding is needed on mount and get platform
@@ -150,11 +166,15 @@ function App() {
       setConfig(cfg);
       setApiKey(cfg.openaiApiKey || '');
       setSelectedAudioDevice(cfg.audioInputDevice || '');
+      setObsidianVaultPathState(cfg.obsidianVaultPath || '');
     });
     GetHistory().then((h: HistoryItem[]) => setHistory(h));
     GetAudioInputDevices().then((devices: AudioInputDevice[]) => setAudioDevices(devices));
     GetStats().then((s: UsageStats) => setStats(s));
     GetRecordingHotkey().then((h: string) => setCurrentHotkey(h));
+    GetBrainCacheHotkey().then((h: string) => setBrainCacheHotkeyState(h));
+    GetObsidianVaultPath().then((path: string) => setObsidianVaultPathState(path));
+    GetBrainCacheDestinationPreview().then((path: string) => setBrainCacheDestination(path));
     GetCancelHotkey().then((h: string) => setCancelHotkey(h));
 
     LogInfo('Setting up EventsOn for stateChanged');
@@ -351,22 +371,73 @@ function App() {
   }, []);
 
   const handleHotkeyChange = useCallback(async (keyName: string) => {
-    setCurrentHotkey(keyName);
+    if (brainCacheHotkey && keyName === brainCacheHotkey) {
+      alert('Recording hotkey must be different from the BrainCache key.');
+      return;
+    }
+
     try {
       await SetRecordingHotkey(keyName);
+      setCurrentHotkey(keyName);
     } catch (error) {
       console.error('Failed to set hotkey:', error);
+      alert(getErrorMessage(error));
+      GetRecordingHotkey().then((h: string) => setCurrentHotkey(h));
+    }
+  }, [brainCacheHotkey]);
+
+  const handleBrainCacheHotkeyChange = useCallback(async (keyName: string) => {
+    if (keyName === currentHotkey || keyName === cancelHotkey) {
+      alert('BrainCache hotkey must be different from the recording and cancel keys.');
+      return;
+    }
+
+    try {
+      await SetBrainCacheHotkey(keyName);
+      setBrainCacheHotkeyState(keyName);
+    } catch (error) {
+      console.error('Failed to set BrainCache hotkey:', error);
+      alert(getErrorMessage(error));
+      GetBrainCacheHotkey().then((h: string) => setBrainCacheHotkeyState(h));
+    }
+  }, [currentHotkey, cancelHotkey]);
+
+  const handleClearBrainCacheHotkey = useCallback(async () => {
+    try {
+      await SetBrainCacheHotkey('');
+      setBrainCacheHotkeyState('');
+    } catch (error) {
+      console.error('Failed to clear BrainCache hotkey:', error);
+      alert(getErrorMessage(error));
+      GetBrainCacheHotkey().then((h: string) => setBrainCacheHotkeyState(h));
+    }
+  }, []);
+
+  const handleObsidianVaultPathChange = useCallback(async (path: string) => {
+    setObsidianVaultPathState(path);
+    try {
+      await SetObsidianVaultPath(path);
+      GetConfig().then((c: Config) => setConfig(c));
+    } catch (error) {
+      console.error('Failed to set Obsidian vault path:', error);
     }
   }, []);
 
   const handleCancelKeyChange = useCallback(async (keyName: string) => {
-    setCancelHotkey(keyName);
+    if (brainCacheHotkey && keyName === brainCacheHotkey) {
+      alert('Cancel hotkey must be different from the BrainCache key.');
+      return;
+    }
+
     try {
       await SetCancelHotkey(keyName);
+      setCancelHotkey(keyName);
     } catch (error) {
       console.error('Failed to set cancel key:', error);
+      alert(getErrorMessage(error));
+      GetCancelHotkey().then((h: string) => setCancelHotkey(h));
     }
-  }, []);
+  }, [brainCacheHotkey]);
 
   // Map a keyboard event to a key name
   const mapKeyEventToKeyName = useCallback((e: React.KeyboardEvent<HTMLDivElement>): string | null => {
@@ -442,9 +513,22 @@ function App() {
     }
   }, [isCapturingCancelKey, mapKeyEventToKeyName, handleCancelKeyChange]);
 
+  const handleBrainCacheKeyCapture = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!isCapturingBrainCacheKey) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const keyName = mapKeyEventToKeyName(e);
+    if (keyName) {
+      handleBrainCacheHotkeyChange(keyName);
+      setIsCapturingBrainCacheKey(false);
+    }
+  }, [isCapturingBrainCacheKey, mapKeyEventToKeyName, handleBrainCacheHotkeyChange]);
+
   // Click outside to cancel capture
   useEffect(() => {
-    if (!isCapturingHotkey && !isCapturingCancelKey) return;
+    if (!isCapturingHotkey && !isCapturingBrainCacheKey && !isCapturingCancelKey) return;
     
     const handleClickOutside = (e: MouseEvent) => {
       if (isCapturingHotkey && hotkeyInputRef.current && !hotkeyInputRef.current.contains(e.target as Node)) {
@@ -453,11 +537,14 @@ function App() {
       if (isCapturingCancelKey && cancelKeyInputRef.current && !cancelKeyInputRef.current.contains(e.target as Node)) {
         setIsCapturingCancelKey(false);
       }
+      if (isCapturingBrainCacheKey && brainCacheKeyInputRef.current && !brainCacheKeyInputRef.current.contains(e.target as Node)) {
+        setIsCapturingBrainCacheKey(false);
+      }
     };
     
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isCapturingHotkey, isCapturingCancelKey]);
+  }, [isCapturingHotkey, isCapturingBrainCacheKey, isCapturingCancelKey]);
 
   // Format key name for display
   const formatKeyDisplay = (keyName: string): string => {
@@ -594,9 +681,15 @@ function App() {
 
         <div className="sidebar-footer">
           <div className="hotkey-hint">
-            <kbd>Right ⌥</kbd>
+            <kbd>{getHotkeyShortDisplay(currentHotkey)}</kbd>
             <span>to record</span>
           </div>
+          {brainCacheHotkey && (
+            <div className="hotkey-hint braincache-hint">
+              <kbd>{getHotkeyShortDisplay(brainCacheHotkey)}</kbd>
+              <span>to BrainCache</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -863,6 +956,61 @@ function App() {
                   />
                   <span className="slider" />
                 </label>
+              </div>
+            </section>
+
+            <section className="settings-section">
+              <h2>Obsidian / BrainCache</h2>
+
+              <div className="setting-row">
+                <div className="setting-info">
+                  <label>Obsidian Vault Path</label>
+                  <p>BrainCache writes daily notes into the Yap folder in this vault</p>
+                </div>
+                <div className="api-key-input vault-path-input">
+                  <input
+                    type="text"
+                    value={obsidianVaultPath}
+                    onChange={(e) => setObsidianVaultPathState(e.target.value)}
+                    placeholder="/Users/you/Documents/Obsidian/Vault"
+                  />
+                  <button onClick={() => handleObsidianVaultPathChange(obsidianVaultPath)}>Save</button>
+                </div>
+              </div>
+
+              <div className="setting-row">
+                <div className="setting-info">
+                  <label>BrainCache Key</label>
+                  <p>Press this key to capture directly to Obsidian</p>
+                </div>
+                <div className="hotkey-actions">
+                  <div
+                    ref={brainCacheKeyInputRef}
+                    className={`hotkey-capture ${isCapturingBrainCacheKey ? 'capturing' : ''}`}
+                    tabIndex={0}
+                    onClick={() => setIsCapturingBrainCacheKey(true)}
+                    onKeyDown={handleBrainCacheKeyCapture}
+                    onBlur={() => setIsCapturingBrainCacheKey(false)}
+                  >
+                    {isCapturingBrainCacheKey ? (
+                      <span className="capture-prompt">Press any key...</span>
+                    ) : brainCacheHotkey ? (
+                      <span className="hotkey-display">{formatKeyDisplay(brainCacheHotkey)}</span>
+                    ) : (
+                      <span className="capture-prompt">Not set</span>
+                    )}
+                  </div>
+                  {brainCacheHotkey && (
+                    <button className="clear-hotkey-btn" onClick={handleClearBrainCacheHotkey}>Clear</button>
+                  )}
+                </div>
+              </div>
+
+              <div className="setting-row">
+                <div className="setting-info">
+                  <label>Destination</label>
+                  <p className="destination-preview">{brainCacheDestination}</p>
+                </div>
               </div>
             </section>
 

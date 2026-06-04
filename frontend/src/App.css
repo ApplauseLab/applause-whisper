@@ -487,6 +487,7 @@ body {
   font-size: 14px;
 }
 
+
 .info-bar {
   display: flex;
   justify-content: center;
@@ -844,6 +845,39 @@ body {
   color: var(--text-primary);
   font-size: 14px;
   width: 200px;
+}
+
+.api-key-input.vault-path-input input {
+  width: 360px;
+}
+
+.hotkey-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.clear-hotkey-btn {
+  padding: 10px 14px;
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.clear-hotkey-btn:hover {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.destination-preview {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.braincache-hint {
+  margin-top: 8px;
 }
 
 .api-key-input input:focus {

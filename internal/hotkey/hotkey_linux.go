@@ -15,15 +15,18 @@ static Display *display = NULL;
 static Window root;
 static int running = 0;
 static KeyCode hotkeyCode = 0;
+static KeyCode brainCacheCode = 0;
+static int brainCacheEnabled = 0;
 static KeyCode cancelCode = 0;
 static int cancelEnabled = 0;
 
 extern void goHotkeyPressed(void);
+extern void goBrainCachePressed(void);
 extern void goCancelPressed(void);
 
 static int initDisplay(void) {
     if (display != NULL) return 1;
-    
+
     display = XOpenDisplay(NULL);
     if (display == NULL) {
         fprintf(stderr, "Cannot open X display\n");
@@ -45,6 +48,12 @@ static void setHotkeyKeysym(KeySym keysym) {
     hotkeyCode = XKeysymToKeycode(display, keysym);
 }
 
+static void setBrainCacheKeysym(KeySym keysym, int enabled) {
+    if (display == NULL) return;
+    brainCacheCode = XKeysymToKeycode(display, keysym);
+    brainCacheEnabled = enabled;
+}
+
 static void setCancelKeysym(KeySym keysym) {
     if (display == NULL) return;
     cancelCode = XKeysymToKeycode(display, keysym);
@@ -61,40 +70,56 @@ static void disableCancel(void) {
 static void startMonitoring(void) {
     if (display == NULL) return;
     running = 1;
-    
+
     // Grab the hotkey
     XGrabKey(display, hotkeyCode, AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
-    
+
     // Also grab common modifier combinations
     XGrabKey(display, hotkeyCode, Mod2Mask, root, True, GrabModeAsync, GrabModeAsync);
     XGrabKey(display, hotkeyCode, LockMask, root, True, GrabModeAsync, GrabModeAsync);
     XGrabKey(display, hotkeyCode, Mod2Mask | LockMask, root, True, GrabModeAsync, GrabModeAsync);
+    if (brainCacheEnabled) {
+        XGrabKey(display, brainCacheCode, AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
+        XGrabKey(display, brainCacheCode, Mod2Mask, root, True, GrabModeAsync, GrabModeAsync);
+        XGrabKey(display, brainCacheCode, LockMask, root, True, GrabModeAsync, GrabModeAsync);
+        XGrabKey(display, brainCacheCode, Mod2Mask | LockMask, root, True, GrabModeAsync, GrabModeAsync);
+    }
 }
 
 static void stopMonitoring(void) {
     if (display == NULL) return;
     running = 0;
-    
+
     XUngrabKey(display, hotkeyCode, AnyModifier, root);
     XUngrabKey(display, hotkeyCode, Mod2Mask, root);
     XUngrabKey(display, hotkeyCode, LockMask, root);
     XUngrabKey(display, hotkeyCode, Mod2Mask | LockMask, root);
+    if (brainCacheEnabled) {
+        XUngrabKey(display, brainCacheCode, AnyModifier, root);
+        XUngrabKey(display, brainCacheCode, Mod2Mask, root);
+        XUngrabKey(display, brainCacheCode, LockMask, root);
+        XUngrabKey(display, brainCacheCode, Mod2Mask | LockMask, root);
+    }
 }
 
 static void processEvents(void) {
     if (display == NULL || !running) return;
-    
+
     XEvent event;
     while (XPending(display) > 0) {
         XNextEvent(display, &event);
-        
+
         if (event.type == KeyPress) {
             KeyCode keycode = event.xkey.keycode;
-            
+
             if (keycode == hotkeyCode) {
                 goHotkeyPressed();
             }
-            
+
+            if (brainCacheEnabled && keycode == brainCacheCode) {
+                goBrainCachePressed();
+            }
+
             if (cancelEnabled && keycode == cancelCode) {
                 goCancelPressed();
             }
@@ -121,21 +146,25 @@ type Callback func()
 
 // Manager handles global hotkey registration
 type Manager struct {
-	mu             sync.Mutex
-	running        bool
-	hotkeyCallback Callback
-	cancelCallback func()
-	cancelEnabled  bool
-	stopCh         chan struct{}
-	hotkeyStr      string
-	cancelStr      string
+	mu                 sync.Mutex
+	running            bool
+	hotkeyCallback     Callback
+	brainCacheCallback Callback
+	cancelCallback     func()
+	cancelEnabled      bool
+	stopCh             chan struct{}
+	hotkeyStr          string
+	brainCacheStr      string
+	cancelStr          string
 }
 
 var (
-	callbackMu     sync.Mutex
-	hotkeyCallback Callback
-	cancelCallbackMu sync.Mutex
-	cancelCallback func()
+	callbackMu           sync.Mutex
+	hotkeyCallback       Callback
+	brainCacheCallbackMu sync.Mutex
+	brainCacheCallback   Callback
+	cancelCallbackMu     sync.Mutex
+	cancelCallback       func()
 )
 
 //export goHotkeyPressed
@@ -143,6 +172,16 @@ func goHotkeyPressed() {
 	callbackMu.Lock()
 	cb := hotkeyCallback
 	callbackMu.Unlock()
+	if cb != nil {
+		go cb()
+	}
+}
+
+//export goBrainCachePressed
+func goBrainCachePressed() {
+	brainCacheCallbackMu.Lock()
+	cb := brainCacheCallback
+	brainCacheCallbackMu.Unlock()
 	if cb != nil {
 		go cb()
 	}
@@ -167,7 +206,7 @@ func NewManager() *Manager {
 }
 
 // Register registers the global hotkey
-func (m *Manager) Register(cb Callback) error {
+func (m *Manager) Register(cb Callback, brainCacheCb Callback) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -182,12 +221,22 @@ func (m *Manager) Register(cb Callback) error {
 	callbackMu.Lock()
 	hotkeyCallback = cb
 	callbackMu.Unlock()
+	brainCacheCallbackMu.Lock()
+	brainCacheCallback = brainCacheCb
+	brainCacheCallbackMu.Unlock()
 	m.hotkeyCallback = cb
+	m.brainCacheCallback = brainCacheCb
 
 	// Set the hotkey
 	keysym := KeyNameToKeysym(m.hotkeyStr)
 	C.setHotkeyKeysym(C.KeySym(keysym))
-	
+	if m.brainCacheStr != "" {
+		brainCacheKeysym := KeyNameToKeysym(m.brainCacheStr)
+		C.setBrainCacheKeysym(C.KeySym(brainCacheKeysym), C.int(1))
+	} else {
+		C.setBrainCacheKeysym(C.KeySym(0), C.int(0))
+	}
+
 	// Set the cancel key
 	cancelKeysym := KeyNameToKeysym(m.cancelStr)
 	C.setCancelKeysym(C.KeySym(cancelKeysym))
@@ -201,7 +250,7 @@ func (m *Manager) Register(cb Callback) error {
 	go func() {
 		ticker := time.NewTicker(10 * time.Millisecond)
 		defer ticker.Stop()
-		
+
 		for {
 			select {
 			case <-m.stopCh:
@@ -214,6 +263,31 @@ func (m *Manager) Register(cb Callback) error {
 
 	fmt.Printf("Hotkey registered: %s\n", m.hotkeyStr)
 	return nil
+}
+
+// SetBrainCacheHotkey sets the BrainCache hotkey by name. Empty disables it.
+func (m *Manager) SetBrainCacheHotkey(hotkeyName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.brainCacheStr = strings.ToLower(strings.TrimSpace(hotkeyName))
+	if m.running {
+		C.stopMonitoring()
+		if m.brainCacheStr != "" {
+			keysym := KeyNameToKeysym(m.brainCacheStr)
+			C.setBrainCacheKeysym(C.KeySym(keysym), C.int(1))
+		} else {
+			C.setBrainCacheKeysym(C.KeySym(0), C.int(0))
+		}
+		C.startMonitoring()
+	} else if m.brainCacheStr != "" {
+		keysym := KeyNameToKeysym(m.brainCacheStr)
+		C.setBrainCacheKeysym(C.KeySym(keysym), C.int(1))
+	} else {
+		C.setBrainCacheKeysym(C.KeySym(0), C.int(0))
+	}
+
+	fmt.Printf("BrainCache hotkey set to: %s\n", m.brainCacheStr)
 }
 
 // Unregister removes the hotkey
@@ -237,10 +311,10 @@ func (m *Manager) Unregister() error {
 func (m *Manager) SetHotkeyType(hotkeyName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	m.hotkeyStr = strings.ToLower(hotkeyName)
 	keysym := KeyNameToKeysym(m.hotkeyStr)
-	
+
 	if m.running {
 		C.stopMonitoring()
 		C.setHotkeyKeysym(C.KeySym(keysym))
@@ -248,7 +322,7 @@ func (m *Manager) SetHotkeyType(hotkeyName string) {
 	} else {
 		C.setHotkeyKeysym(C.KeySym(keysym))
 	}
-	
+
 	fmt.Printf("Hotkey set to: %s\n", m.hotkeyStr)
 }
 
@@ -256,11 +330,11 @@ func (m *Manager) SetHotkeyType(hotkeyName string) {
 func (m *Manager) SetCancelKey(keyName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	m.cancelStr = strings.ToLower(keyName)
 	keysym := KeyNameToKeysym(m.cancelStr)
 	C.setCancelKeysym(C.KeySym(keysym))
-	
+
 	fmt.Printf("Cancel key set to: %s\n", m.cancelStr)
 }
 
@@ -276,23 +350,23 @@ func (m *Manager) EnableCancelKey(cb func()) {
 	cancelCallbackMu.Lock()
 	cancelCallback = cb
 	cancelCallbackMu.Unlock()
-	
+
 	m.mu.Lock()
 	m.cancelCallback = cb
 	m.cancelEnabled = true
 	m.mu.Unlock()
-	
+
 	C.enableCancel()
 }
 
 // DisableCancelKey stops monitoring for the cancel key
 func (m *Manager) DisableCancelKey() {
 	C.disableCancel()
-	
+
 	cancelCallbackMu.Lock()
 	cancelCallback = nil
 	cancelCallbackMu.Unlock()
-	
+
 	m.mu.Lock()
 	m.cancelEnabled = false
 	m.cancelCallback = nil
@@ -336,7 +410,7 @@ func KeyNameToKeysym(name string) uint64 {
 		return 0xFFEB // XK_Super_L
 	case "capslock":
 		return 0xFFE5 // XK_Caps_Lock
-	
+
 	// Special keys
 	case "escape", "esc":
 		return 0xFF1B // XK_Escape
@@ -350,7 +424,7 @@ func KeyNameToKeysym(name string) uint64 {
 		return 0xFF08 // XK_BackSpace
 	case "delete":
 		return 0xFFFF // XK_Delete
-	
+
 	// Arrow keys
 	case "left", "arrowleft":
 		return 0xFF51 // XK_Left
@@ -360,7 +434,7 @@ func KeyNameToKeysym(name string) uint64 {
 		return 0xFF52 // XK_Up
 	case "down", "arrowdown":
 		return 0xFF54 // XK_Down
-	
+
 	// Function keys
 	case "f1":
 		return 0xFFBE
@@ -386,7 +460,7 @@ func KeyNameToKeysym(name string) uint64 {
 		return 0xFFC8
 	case "f12":
 		return 0xFFC9
-	
+
 	// Letter keys (lowercase)
 	case "a":
 		return 0x0061
@@ -440,7 +514,7 @@ func KeyNameToKeysym(name string) uint64 {
 		return 0x0079
 	case "z":
 		return 0x007A
-	
+
 	// Number keys
 	case "0":
 		return 0x0030
@@ -462,7 +536,7 @@ func KeyNameToKeysym(name string) uint64 {
 		return 0x0038
 	case "9":
 		return 0x0039
-	
+
 	default:
 		return 0xFFEA // Default to right alt
 	}

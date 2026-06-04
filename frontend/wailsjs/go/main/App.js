@@ -38,6 +38,14 @@ export function GetAudioInputDevices() {
   return window['go']['main']['App']['GetAudioInputDevices']();
 }
 
+export function GetBrainCacheDestinationPreview() {
+  return window['go']['main']['App']['GetBrainCacheDestinationPreview']();
+}
+
+export function GetBrainCacheHotkey() {
+  return window['go']['main']['App']['GetBrainCacheHotkey']();
+}
+
 export function GetCancelHotkey() {
   return window['go']['main']['App']['GetCancelHotkey']();
 }
@@ -60,6 +68,10 @@ export function GetHistory() {
 
 export function GetModels() {
   return window['go']['main']['App']['GetModels']();
+}
+
+export function GetObsidianVaultPath() {
+  return window['go']['main']['App']['GetObsidianVaultPath']();
 }
 
 export function GetPlatform() {
@@ -126,6 +138,11 @@ export function SetAutoPaste(arg1) {
   return window['go']['main']['App']['SetAutoPaste'](arg1);
 }
 
+export function SetBrainCacheHotkey(arg1) {
+  return window['go']['main']['App']['SetBrainCacheHotkey'](arg1);
+}
+
+
 export function SetCancelHotkey(arg1) {
   return window['go']['main']['App']['SetCancelHotkey'](arg1);
 }
@@ -136,6 +153,10 @@ export function SetModel(arg1) {
 
 export function SetOnboardingCompleted(arg1) {
   return window['go']['main']['App']['SetOnboardingCompleted'](arg1);
+}
+
+export function SetObsidianVaultPath(arg1) {
+  return window['go']['main']['App']['SetObsidianVaultPath'](arg1);
 }
 
 export function SetOpenAIKey(arg1) {
@@ -176,4 +197,8 @@ export function StopRecording() {
 
 export function ToggleRecording() {
   return window['go']['main']['App']['ToggleRecording']();
+}
+
+export function ToggleBrainCacheRecording() {
+  return window['go']['main']['App']['ToggleBrainCacheRecording']();
 }

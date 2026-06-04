@@ -35,6 +35,12 @@ type Config struct {
 	// Cancel hotkey - key to cancel recording, default: "escape"
 	CancelHotkey string `json:"cancelHotkey"`
 
+	// BrainCache hotkey - key to record directly into Obsidian
+	BrainCacheHotkey string `json:"brainCacheHotkey,omitempty"`
+
+	// Obsidian vault path for BrainCache notes
+	ObsidianVaultPath string `json:"obsidianVaultPath,omitempty"`
+
 	// Sound enabled for recording start/stop
 	SoundEnabled *bool `json:"soundEnabled,omitempty"`
 
@@ -52,6 +58,7 @@ func DefaultConfig() *Config {
 		ShowNotification: true,
 		RecordingHotkey:  DefaultRecordingHotkey(),
 		CancelHotkey:     "escape",
+		BrainCacheHotkey: "",
 		SoundEnabled:     &soundEnabled,
 	}
 }
@@ -190,6 +197,18 @@ func (cm *ConfigManager) SetRecordingHotkey(hotkey string) error {
 // SetCancelHotkey updates the cancel hotkey setting
 func (cm *ConfigManager) SetCancelHotkey(hotkey string) error {
 	cm.config.CancelHotkey = hotkey
+	return cm.Save()
+}
+
+// SetBrainCacheHotkey updates the BrainCache hotkey setting
+func (cm *ConfigManager) SetBrainCacheHotkey(hotkey string) error {
+	cm.config.BrainCacheHotkey = hotkey
+	return cm.Save()
+}
+
+// SetObsidianVaultPath updates the Obsidian vault path setting
+func (cm *ConfigManager) SetObsidianVaultPath(path string) error {
+	cm.config.ObsidianVaultPath = path
 	return cm.Save()
 }
 

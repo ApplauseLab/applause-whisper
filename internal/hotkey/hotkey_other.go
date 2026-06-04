@@ -24,7 +24,7 @@ func NewManager() *Manager {
 }
 
 // Register registers the global hotkey
-func (m *Manager) Register(callback Callback) error {
+func (m *Manager) Register(callback Callback, brainCacheCallback Callback) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -68,6 +68,11 @@ func (m *Manager) DisableCancelKey() {
 
 // SetHotkeyType sets the hotkey (no-op)
 func (m *Manager) SetHotkeyType(hotkeyType string) {
+	// Not supported on this platform
+}
+
+// SetBrainCacheHotkey sets the BrainCache hotkey (no-op)
+func (m *Manager) SetBrainCacheHotkey(hotkeyName string) {
 	// Not supported on this platform
 }
 

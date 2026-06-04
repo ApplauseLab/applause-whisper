@@ -21,6 +21,10 @@ export function GetAudioData(arg1:string):Promise<string>;
 
 export function GetAudioInputDevices():Promise<Array<main.AudioInputDevice>>;
 
+export function GetBrainCacheDestinationPreview():Promise<string>;
+
+export function GetBrainCacheHotkey():Promise<string>;
+
 export function GetCancelHotkey():Promise<string>;
 
 export function GetCancelHotkeyDisplayName():Promise<string>;
@@ -32,6 +36,8 @@ export function GetCurrentAudioInputDevice():Promise<string>;
 export function GetHistory():Promise<Array<main.HistoryItem>>;
 
 export function GetModels():Promise<Array<main.ModelInfo>>;
+
+export function GetObsidianVaultPath():Promise<string>;
 
 export function GetPlatform():Promise<string>;
 
@@ -65,11 +71,16 @@ export function SetAudioInputDevice(arg1:string):Promise<void>;
 
 export function SetAutoPaste(arg1:boolean):Promise<void>;
 
+export function SetBrainCacheHotkey(arg1:string):Promise<void>;
+
+
 export function SetCancelHotkey(arg1:string):Promise<void>;
 
 export function SetModel(arg1:string):Promise<void>;
 
 export function SetOnboardingCompleted(arg1:boolean):Promise<void>;
+
+export function SetObsidianVaultPath(arg1:string):Promise<void>;
 
 export function SetOpenAIKey(arg1:string):Promise<void>;
 
@@ -90,3 +101,5 @@ export function StartRecording():Promise<void>;
 export function StopRecording():Promise<void>;
 
 export function ToggleRecording():Promise<void>;
+
+export function ToggleBrainCacheRecording():Promise<void>;

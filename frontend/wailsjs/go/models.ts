@@ -118,6 +118,8 @@ export namespace models {
 	    showNotification: boolean;
 	    recordingHotkey: string;
 	    cancelHotkey: string;
+	    brainCacheHotkey?: string;
+	    obsidianVaultPath?: string;
 	    soundEnabled?: boolean;
 	    onboardingCompleted: boolean;
 	
@@ -135,10 +137,11 @@ export namespace models {
 	        this.showNotification = source["showNotification"];
 	        this.recordingHotkey = source["recordingHotkey"];
 	        this.cancelHotkey = source["cancelHotkey"];
+	        this.brainCacheHotkey = source["brainCacheHotkey"];
+	        this.obsidianVaultPath = source["obsidianVaultPath"];
 	        this.soundEnabled = source["soundEnabled"];
 	        this.onboardingCompleted = source["onboardingCompleted"];
 	    }
 	}
 
 }
-
