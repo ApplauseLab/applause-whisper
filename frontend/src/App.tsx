@@ -3,6 +3,7 @@ import './App.css';
 import { RecordingOverlay } from './RecordingOverlay';
 import { Onboarding } from './Onboarding';
 import packageJson from '../package.json';
+import obsidianLogo from './assets/obsidian-logo.svg';
 // Sound playback is now handled natively in Go (internal/sounds)
 import {
   GetState,
@@ -27,16 +28,18 @@ import {
   GetStats,
   GetRecordingHotkey,
   SetRecordingHotkey,
-  GetBrainCacheHotkey,
-  SetBrainCacheHotkey,
   GetObsidianVaultPath,
   SetObsidianVaultPath,
-  GetBrainCacheDestinationPreview,
+  GetObsidianNoteName,
+  SetObsidianNoteName,
+  GetObsidianDestinationPreview,
   GetCancelHotkey,
   SetCancelHotkey,
   GetPlatform,
   Quit,
   IsOnboardingCompleted,
+  InstallObsidianExtension,
+  UninstallObsidianExtension,
 } from '../wailsjs/go/main/App';
 import { EventsOn, LogInfo } from '../wailsjs/runtime/runtime';
 
@@ -66,8 +69,9 @@ interface Config {
   audioInputDevice?: string;
   autoPaste: boolean;
   soundEnabled?: boolean;
-  brainCacheHotkey?: string;
   obsidianVaultPath?: string;
+  obsidianNoteName?: string;
+  obsidianExtensionInstalled: boolean;
 }
 
 interface HistoryItem {
@@ -100,7 +104,7 @@ interface UsageStats {
   totalWords: number;
 }
 
-type Page = 'home' | 'settings' | 'history';
+type Page = 'home' | 'extensions' | 'settings' | 'history';
 
 const getErrorMessage = (error: unknown): string => {
   return error instanceof Error ? error.message : String(error);
@@ -138,17 +142,16 @@ function App() {
     totalWords: 0,
   });
   const [currentHotkey, setCurrentHotkey] = useState<string>('rightoption');
-  const [brainCacheHotkey, setBrainCacheHotkeyState] = useState<string>('');
   const [obsidianVaultPath, setObsidianVaultPathState] = useState<string>('');
-  const [brainCacheDestination, setBrainCacheDestination] = useState<string>('Yap/BrainCache YYYY-MM-DD.md');
+  const [obsidianNoteName, setObsidianNoteNameState] = useState<string>('Transcriptions {{date}}');
+  const [obsidianDestination, setObsidianDestination] = useState<string>('Yap/Transcriptions YYYY-MM-DD.md');
+  const [managingObsidian, setManagingObsidian] = useState<boolean>(false);
   const [cancelHotkey, setCancelHotkey] = useState<string>('escape');
   const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null);
   const [platform, setPlatform] = useState<string>('darwin');
   const [isCapturingHotkey, setIsCapturingHotkey] = useState<boolean>(false);
-  const [isCapturingBrainCacheKey, setIsCapturingBrainCacheKey] = useState<boolean>(false);
   const [isCapturingCancelKey, setIsCapturingCancelKey] = useState<boolean>(false);
   const hotkeyInputRef = useRef<HTMLDivElement>(null);
-  const brainCacheKeyInputRef = useRef<HTMLDivElement>(null);
   const cancelKeyInputRef = useRef<HTMLDivElement>(null);
 
   // Check if onboarding is needed on mount and get platform
@@ -167,14 +170,15 @@ function App() {
       setApiKey(cfg.openaiApiKey || '');
       setSelectedAudioDevice(cfg.audioInputDevice || '');
       setObsidianVaultPathState(cfg.obsidianVaultPath || '');
+      setObsidianNoteNameState(cfg.obsidianNoteName || 'Transcriptions {{date}}');
     });
     GetHistory().then((h: HistoryItem[]) => setHistory(h));
     GetAudioInputDevices().then((devices: AudioInputDevice[]) => setAudioDevices(devices));
     GetStats().then((s: UsageStats) => setStats(s));
     GetRecordingHotkey().then((h: string) => setCurrentHotkey(h));
-    GetBrainCacheHotkey().then((h: string) => setBrainCacheHotkeyState(h));
     GetObsidianVaultPath().then((path: string) => setObsidianVaultPathState(path));
-    GetBrainCacheDestinationPreview().then((path: string) => setBrainCacheDestination(path));
+    GetObsidianNoteName().then((name: string) => setObsidianNoteNameState(name));
+    GetObsidianDestinationPreview().then((path: string) => setObsidianDestination(path));
     GetCancelHotkey().then((h: string) => setCancelHotkey(h));
 
     LogInfo('Setting up EventsOn for stateChanged');
@@ -371,11 +375,6 @@ function App() {
   }, []);
 
   const handleHotkeyChange = useCallback(async (keyName: string) => {
-    if (brainCacheHotkey && keyName === brainCacheHotkey) {
-      alert('Recording hotkey must be different from the BrainCache key.');
-      return;
-    }
-
     try {
       await SetRecordingHotkey(keyName);
       setCurrentHotkey(keyName);
@@ -383,33 +382,6 @@ function App() {
       console.error('Failed to set hotkey:', error);
       alert(getErrorMessage(error));
       GetRecordingHotkey().then((h: string) => setCurrentHotkey(h));
-    }
-  }, [brainCacheHotkey]);
-
-  const handleBrainCacheHotkeyChange = useCallback(async (keyName: string) => {
-    if (keyName === currentHotkey || keyName === cancelHotkey) {
-      alert('BrainCache hotkey must be different from the recording and cancel keys.');
-      return;
-    }
-
-    try {
-      await SetBrainCacheHotkey(keyName);
-      setBrainCacheHotkeyState(keyName);
-    } catch (error) {
-      console.error('Failed to set BrainCache hotkey:', error);
-      alert(getErrorMessage(error));
-      GetBrainCacheHotkey().then((h: string) => setBrainCacheHotkeyState(h));
-    }
-  }, [currentHotkey, cancelHotkey]);
-
-  const handleClearBrainCacheHotkey = useCallback(async () => {
-    try {
-      await SetBrainCacheHotkey('');
-      setBrainCacheHotkeyState('');
-    } catch (error) {
-      console.error('Failed to clear BrainCache hotkey:', error);
-      alert(getErrorMessage(error));
-      GetBrainCacheHotkey().then((h: string) => setBrainCacheHotkeyState(h));
     }
   }, []);
 
@@ -423,12 +395,55 @@ function App() {
     }
   }, []);
 
-  const handleCancelKeyChange = useCallback(async (keyName: string) => {
-    if (brainCacheHotkey && keyName === brainCacheHotkey) {
-      alert('Cancel hotkey must be different from the BrainCache key.');
+  const handleObsidianNoteNameChange = useCallback(async (name: string) => {
+    setObsidianNoteNameState(name);
+    try {
+      await SetObsidianNoteName(name);
+      const cfg = await GetConfig();
+      setConfig(cfg);
+      const savedName = await GetObsidianNoteName();
+      setObsidianNoteNameState(savedName);
+      const preview = await GetObsidianDestinationPreview();
+      setObsidianDestination(preview);
+    } catch (error) {
+      console.error('Failed to set Obsidian note name:', error);
+      alert(getErrorMessage(error));
+      GetObsidianNoteName().then((savedName: string) => setObsidianNoteNameState(savedName));
+      GetObsidianDestinationPreview().then((path: string) => setObsidianDestination(path));
+    }
+  }, []);
+
+  const handleInstallObsidian = useCallback(async () => {
+    try {
+      await InstallObsidianExtension();
+      const cfg = await GetConfig();
+      setConfig(cfg);
+      setManagingObsidian(true);
+    } catch (error) {
+      console.error('Failed to install Obsidian extension:', error);
+      alert(getErrorMessage(error));
+    }
+  }, []);
+
+  const handleUninstallObsidian = useCallback(async () => {
+    if (!confirm('Uninstall the Obsidian extension? This clears its vault path.')) {
       return;
     }
+    try {
+      await UninstallObsidianExtension();
+      const cfg = await GetConfig();
+      setConfig(cfg);
+      setObsidianVaultPathState('');
+      setObsidianNoteNameState('Transcriptions {{date}}');
+      GetObsidianDestinationPreview().then((path: string) => setObsidianDestination(path));
+      setManagingObsidian(false);
+    } catch (error) {
+      console.error('Failed to uninstall Obsidian extension:', error);
+      alert(getErrorMessage(error));
+    }
+  }, []);
 
+  const handleCancelKeyChange = useCallback(async (keyName: string) => {
     try {
       await SetCancelHotkey(keyName);
       setCancelHotkey(keyName);
@@ -437,7 +452,7 @@ function App() {
       alert(getErrorMessage(error));
       GetCancelHotkey().then((h: string) => setCancelHotkey(h));
     }
-  }, [brainCacheHotkey]);
+  }, []);
 
   // Map a keyboard event to a key name
   const mapKeyEventToKeyName = useCallback((e: React.KeyboardEvent<HTMLDivElement>): string | null => {
@@ -513,22 +528,9 @@ function App() {
     }
   }, [isCapturingCancelKey, mapKeyEventToKeyName, handleCancelKeyChange]);
 
-  const handleBrainCacheKeyCapture = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (!isCapturingBrainCacheKey) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    const keyName = mapKeyEventToKeyName(e);
-    if (keyName) {
-      handleBrainCacheHotkeyChange(keyName);
-      setIsCapturingBrainCacheKey(false);
-    }
-  }, [isCapturingBrainCacheKey, mapKeyEventToKeyName, handleBrainCacheHotkeyChange]);
-
   // Click outside to cancel capture
   useEffect(() => {
-    if (!isCapturingHotkey && !isCapturingBrainCacheKey && !isCapturingCancelKey) return;
+    if (!isCapturingHotkey && !isCapturingCancelKey) return;
     
     const handleClickOutside = (e: MouseEvent) => {
       if (isCapturingHotkey && hotkeyInputRef.current && !hotkeyInputRef.current.contains(e.target as Node)) {
@@ -537,14 +539,11 @@ function App() {
       if (isCapturingCancelKey && cancelKeyInputRef.current && !cancelKeyInputRef.current.contains(e.target as Node)) {
         setIsCapturingCancelKey(false);
       }
-      if (isCapturingBrainCacheKey && brainCacheKeyInputRef.current && !brainCacheKeyInputRef.current.contains(e.target as Node)) {
-        setIsCapturingBrainCacheKey(false);
-      }
     };
     
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isCapturingHotkey, isCapturingBrainCacheKey, isCapturingCancelKey]);
+  }, [isCapturingHotkey, isCapturingCancelKey]);
 
   // Format key name for display
   const formatKeyDisplay = (keyName: string): string => {
@@ -615,6 +614,7 @@ function App() {
 
   const currentModel = models.find(m => m.name === appState.currentModel);
   const needsDownload = appState.currentProvider === 'local' && currentModel && !currentModel.downloaded;
+  const obsidianInstalled = config?.obsidianExtensionInstalled === true || Boolean(config?.obsidianVaultPath);
 
   const handleOnboardingComplete = useCallback(() => {
     setShowOnboarding(false);
@@ -657,6 +657,23 @@ function App() {
           </button>
 
           <button 
+            className={`nav-item ${currentPage === 'extensions' ? 'active' : ''}`}
+            onClick={() => setCurrentPage('extensions')}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 2v6"/>
+              <path d="M12 16v6"/>
+              <path d="M4.93 4.93l4.24 4.24"/>
+              <path d="M14.83 14.83l4.24 4.24"/>
+              <path d="M2 12h6"/>
+              <path d="M16 12h6"/>
+              <path d="M4.93 19.07l4.24-4.24"/>
+              <path d="M14.83 9.17l4.24-4.24"/>
+            </svg>
+            <span>Extensions</span>
+          </button>
+
+          <button 
             className={`nav-item ${currentPage === 'settings' ? 'active' : ''}`}
             onClick={() => setCurrentPage('settings')}
           >
@@ -684,12 +701,6 @@ function App() {
             <kbd>{getHotkeyShortDisplay(currentHotkey)}</kbd>
             <span>to record</span>
           </div>
-          {brainCacheHotkey && (
-            <div className="hotkey-hint braincache-hint">
-              <kbd>{getHotkeyShortDisplay(brainCacheHotkey)}</kbd>
-              <span>to BrainCache</span>
-            </div>
-          )}
         </div>
       </div>
 
@@ -698,7 +709,7 @@ function App() {
         {/* Draggable header area */}
         <div className="main-header" style={{ '--wails-draggable': 'drag' } as React.CSSProperties}>
           <span className="page-title">
-            {currentPage === 'home' ? 'Home' : currentPage === 'settings' ? 'Settings' : 'History'}
+            {currentPage === 'home' ? 'Home' : currentPage === 'extensions' ? 'Extensions' : currentPage === 'settings' ? 'Settings' : 'History'}
           </span>
         </div>
 
@@ -840,6 +851,84 @@ function App() {
           </div>
         )}
 
+        {currentPage === 'extensions' && (
+          <div className="extensions-page">
+            <div className="extensions-grid">
+              <div className="extension-card">
+                <div className="extension-icon obsidian-icon">
+                  <img src={obsidianLogo} alt="Obsidian" />
+                </div>
+                <div className="extension-content">
+                  <div className="extension-title-row">
+                    <h2>Obsidian</h2>
+                    <span className={`extension-status ${obsidianInstalled ? 'installed' : ''}`}>
+                      {obsidianInstalled ? 'Installed' : 'Available'}
+                    </span>
+                  </div>
+                  <p>Save every transcription directly into your Obsidian vault as local Markdown daily notes.</p>
+                </div>
+                <div className="extension-actions">
+                  {obsidianInstalled ? (
+                    <>
+                      <button className="secondary-button" onClick={() => setManagingObsidian(!managingObsidian)}>
+                        {managingObsidian ? 'Hide Settings' : 'Manage'}
+                      </button>
+                      <button className="danger-button" onClick={handleUninstallObsidian}>Uninstall</button>
+                    </>
+                  ) : (
+                    <button className="primary-button" onClick={handleInstallObsidian}>Install</button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {obsidianInstalled && managingObsidian && (
+              <section className="settings-section extension-settings">
+                <h2>Obsidian Settings</h2>
+
+                <div className="setting-row">
+                  <div className="setting-info">
+                    <label>Obsidian Vault Path</label>
+                    <p>Transcriptions are appended to daily notes in the Yap folder in this vault</p>
+                  </div>
+                  <div className="api-key-input vault-path-input">
+                    <input
+                      type="text"
+                      value={obsidianVaultPath}
+                      onChange={(e) => setObsidianVaultPathState(e.target.value)}
+                      placeholder="/Users/you/Documents/Obsidian/Vault"
+                    />
+                    <button onClick={() => handleObsidianVaultPathChange(obsidianVaultPath)}>Save</button>
+                  </div>
+                </div>
+
+                <div className="setting-row">
+                  <div className="setting-info">
+                    <label>Note Name</label>
+                    <p>Stored inside the Yap folder. Use {'{{date}}'} for a daily note.</p>
+                  </div>
+                  <div className="api-key-input vault-path-input">
+                    <input
+                      type="text"
+                      value={obsidianNoteName}
+                      onChange={(e) => setObsidianNoteNameState(e.target.value)}
+                      placeholder="Transcriptions {{date}}"
+                    />
+                    <button onClick={() => handleObsidianNoteNameChange(obsidianNoteName)}>Save</button>
+                  </div>
+                </div>
+
+                <div className="setting-row">
+                  <div className="setting-info">
+                    <label>Destination</label>
+                    <p className="destination-preview">{obsidianDestination}</p>
+                  </div>
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+
         {currentPage === 'settings' && (
           <div className="settings-page">
 
@@ -956,61 +1045,6 @@ function App() {
                   />
                   <span className="slider" />
                 </label>
-              </div>
-            </section>
-
-            <section className="settings-section">
-              <h2>Obsidian / BrainCache</h2>
-
-              <div className="setting-row">
-                <div className="setting-info">
-                  <label>Obsidian Vault Path</label>
-                  <p>BrainCache writes daily notes into the Yap folder in this vault</p>
-                </div>
-                <div className="api-key-input vault-path-input">
-                  <input
-                    type="text"
-                    value={obsidianVaultPath}
-                    onChange={(e) => setObsidianVaultPathState(e.target.value)}
-                    placeholder="/Users/you/Documents/Obsidian/Vault"
-                  />
-                  <button onClick={() => handleObsidianVaultPathChange(obsidianVaultPath)}>Save</button>
-                </div>
-              </div>
-
-              <div className="setting-row">
-                <div className="setting-info">
-                  <label>BrainCache Key</label>
-                  <p>Press this key to capture directly to Obsidian</p>
-                </div>
-                <div className="hotkey-actions">
-                  <div
-                    ref={brainCacheKeyInputRef}
-                    className={`hotkey-capture ${isCapturingBrainCacheKey ? 'capturing' : ''}`}
-                    tabIndex={0}
-                    onClick={() => setIsCapturingBrainCacheKey(true)}
-                    onKeyDown={handleBrainCacheKeyCapture}
-                    onBlur={() => setIsCapturingBrainCacheKey(false)}
-                  >
-                    {isCapturingBrainCacheKey ? (
-                      <span className="capture-prompt">Press any key...</span>
-                    ) : brainCacheHotkey ? (
-                      <span className="hotkey-display">{formatKeyDisplay(brainCacheHotkey)}</span>
-                    ) : (
-                      <span className="capture-prompt">Not set</span>
-                    )}
-                  </div>
-                  {brainCacheHotkey && (
-                    <button className="clear-hotkey-btn" onClick={handleClearBrainCacheHotkey}>Clear</button>
-                  )}
-                </div>
-              </div>
-
-              <div className="setting-row">
-                <div className="setting-info">
-                  <label>Destination</label>
-                  <p className="destination-preview">{brainCacheDestination}</p>
-                </div>
               </div>
             </section>
 
