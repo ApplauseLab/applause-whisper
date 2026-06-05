@@ -33,6 +33,12 @@ export function GetHistory():Promise<Array<main.HistoryItem>>;
 
 export function GetModels():Promise<Array<main.ModelInfo>>;
 
+export function GetObsidianDestinationPreview():Promise<string>;
+
+export function GetObsidianNoteName():Promise<string>;
+
+export function GetObsidianVaultPath():Promise<string>;
+
 export function GetPlatform():Promise<string>;
 
 export function GetRecordingHotkey():Promise<string>;
@@ -45,7 +51,11 @@ export function GetStats():Promise<main.UsageStats>;
 
 export function Hide():Promise<void>;
 
+export function InstallObsidianExtension():Promise<void>;
+
 export function IsModelDownloaded(arg1:string):Promise<boolean>;
+
+export function IsObsidianExtensionInstalled():Promise<boolean>;
 
 export function IsOnboardingCompleted():Promise<boolean>;
 
@@ -69,6 +79,10 @@ export function SetCancelHotkey(arg1:string):Promise<void>;
 
 export function SetModel(arg1:string):Promise<void>;
 
+export function SetObsidianNoteName(arg1:string):Promise<void>;
+
+export function SetObsidianVaultPath(arg1:string):Promise<void>;
+
 export function SetOnboardingCompleted(arg1:boolean):Promise<void>;
 
 export function SetOpenAIKey(arg1:string):Promise<void>;
@@ -90,3 +104,5 @@ export function StartRecording():Promise<void>;
 export function StopRecording():Promise<void>;
 
 export function ToggleRecording():Promise<void>;
+
+export function UninstallObsidianExtension():Promise<void>;

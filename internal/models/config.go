@@ -35,6 +35,15 @@ type Config struct {
 	// Cancel hotkey - key to cancel recording, default: "escape"
 	CancelHotkey string `json:"cancelHotkey"`
 
+	// Obsidian vault path for notes
+	ObsidianVaultPath string `json:"obsidianVaultPath,omitempty"`
+
+	// Obsidian note name template. {{date}} expands to YYYY-MM-DD.
+	ObsidianNoteName string `json:"obsidianNoteName,omitempty"`
+
+	// ObsidianExtensionInstalled indicates whether the Obsidian integration is enabled
+	ObsidianExtensionInstalled bool `json:"obsidianExtensionInstalled"`
+
 	// Sound enabled for recording start/stop
 	SoundEnabled *bool `json:"soundEnabled,omitempty"`
 
@@ -190,6 +199,37 @@ func (cm *ConfigManager) SetRecordingHotkey(hotkey string) error {
 // SetCancelHotkey updates the cancel hotkey setting
 func (cm *ConfigManager) SetCancelHotkey(hotkey string) error {
 	cm.config.CancelHotkey = hotkey
+	return cm.Save()
+}
+
+// SetObsidianVaultPath updates the Obsidian vault path setting
+func (cm *ConfigManager) SetObsidianVaultPath(path string) error {
+	cm.config.ObsidianVaultPath = path
+	return cm.Save()
+}
+
+// SetObsidianNoteName updates the Obsidian note filename template.
+func (cm *ConfigManager) SetObsidianNoteName(name string) error {
+	cm.config.ObsidianNoteName = name
+	return cm.Save()
+}
+
+// IsObsidianExtensionInstalled returns whether the Obsidian integration is enabled.
+func (cm *ConfigManager) IsObsidianExtensionInstalled() bool {
+	return cm.config.ObsidianExtensionInstalled || cm.config.ObsidianVaultPath != ""
+}
+
+// InstallObsidianExtension enables the Obsidian integration.
+func (cm *ConfigManager) InstallObsidianExtension() error {
+	cm.config.ObsidianExtensionInstalled = true
+	return cm.Save()
+}
+
+// UninstallObsidianExtension disables the Obsidian integration and clears its settings.
+func (cm *ConfigManager) UninstallObsidianExtension() error {
+	cm.config.ObsidianExtensionInstalled = false
+	cm.config.ObsidianVaultPath = ""
+	cm.config.ObsidianNoteName = ""
 	return cm.Save()
 }
 

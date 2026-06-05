@@ -46,7 +46,7 @@ interface OnboardingProps {
 
 type Step = 'welcome' | 'provider' | 'model' | 'download' | 'apikey' | 'micRequest' | 'micSuccess' | 'accessRequest' | 'accessSuccess' | 'hotkeyTest' | 'ready';
 type Provider = 'local' | 'openai';
-type HotkeyTestState = 'waiting' | 'recording' | 'success';
+type HotkeyTestState = 'waiting' | 'recording' | 'success' | 'error';
 
 export function Onboarding({ onComplete }: OnboardingProps) {
   const [step, setStep] = useState<Step>('welcome');
@@ -63,6 +63,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
   const [platform, setPlatform] = useState<string>('darwin');
   const [hotkeyTestState, setHotkeyTestState] = useState<HotkeyTestState>('waiting');
   const [testTranscript, setTestTranscript] = useState<string>('');
+  const [hotkeyTestError, setHotkeyTestError] = useState<string>('');
   const hotkeyTestStateRef = useRef<HotkeyTestState>('waiting');
 
   useEffect(() => {
@@ -218,6 +219,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
       // Reset test state when entering this step
       setHotkeyTestState('waiting');
       setTestTranscript('');
+      setHotkeyTestError('');
       hotkeyTestStateRef.current = 'waiting';
       
       // Make sure hotkey is registered
@@ -227,6 +229,10 @@ export function Onboarding({ onComplete }: OnboardingProps) {
         if (state.state === 'recording' && hotkeyTestStateRef.current === 'waiting') {
           setHotkeyTestState('recording');
           hotkeyTestStateRef.current = 'recording';
+        } else if (state.state === 'error' && hotkeyTestStateRef.current === 'recording') {
+          setHotkeyTestState('error');
+          setHotkeyTestError(state.error || 'Recording worked, but transcription failed.');
+          hotkeyTestStateRef.current = 'error';
         } else if (state.state === 'ready' && hotkeyTestStateRef.current === 'recording') {
           setHotkeyTestState('success');
           hotkeyTestStateRef.current = 'success';
@@ -762,6 +768,23 @@ export function Onboarding({ onComplete }: OnboardingProps) {
               )}
             </>
           )}
+          {hotkeyTestState === 'error' && (
+            <>
+              <div className="hotkey-test-icon error">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="8" x2="12" y2="12"/>
+                  <line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+              </div>
+              <div className="hotkey-test-label">Hotkey worked, but transcription needs setup.</div>
+              {hotkeyTestError && (
+                <div className="hotkey-test-error">
+                  {hotkeyTestError}
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
 
@@ -778,9 +801,9 @@ export function Onboarding({ onComplete }: OnboardingProps) {
         <button 
           className="primary-button" 
           onClick={() => setStep('ready')}
-          disabled={hotkeyTestState !== 'success'}
+          disabled={hotkeyTestState === 'waiting' || hotkeyTestState === 'recording'}
         >
-          Continue
+          {hotkeyTestState === 'error' ? 'Continue Anyway' : 'Continue'}
         </button>
       </div>
     </div>

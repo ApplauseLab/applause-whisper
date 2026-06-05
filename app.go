@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"yap/internal/audio"
+	"yap/internal/diagnostics"
 	"yap/internal/hotkey"
 	"yap/internal/models"
+	"yap/internal/obsidian"
 	"yap/internal/overlay"
 	"yap/internal/sounds"
 	"yap/internal/system"
@@ -27,11 +29,15 @@ import (
 // RecordingState represents the current state of the app
 type RecordingState string
 
+type RecordingMode string
+
 const (
 	StateReady        RecordingState = "ready"
 	StateRecording    RecordingState = "recording"
 	StateTranscribing RecordingState = "transcribing"
 	StateError        RecordingState = "error"
+
+	RecordingModeNormal RecordingMode = "normal"
 )
 
 // AppState is sent to the frontend
@@ -86,15 +92,17 @@ type App struct {
 	statsManager  *models.StatsManager
 	hotkeyManager *hotkey.Manager
 	overlay       *overlay.Overlay
+	diagnostics   *diagnostics.Logger
 
 	mu              sync.Mutex
 	state           RecordingState
 	lastTranscript  string
 	lastError       string
 	recordStartTime time.Time
+	recordingMode   RecordingMode
 	hotkeyEnabled   bool
 	history         []HistoryItem
-	
+
 	// Tray callback to update icon
 	onTrayUpdate func(recording bool)
 }
@@ -108,17 +116,17 @@ func NewApp() *App {
 		state:         StateReady,
 		history:       make([]HistoryItem, 0),
 	}
-	
+
 	// Set up overlay stop callback
 	app.overlay.SetStopCallback(func() {
 		app.ToggleRecording()
 	})
-	
+
 	// Set up overlay cancel callback
 	app.overlay.SetCancelCallback(func() {
 		app.CancelRecording()
 	})
-	
+
 	return app
 }
 
@@ -145,6 +153,8 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	a.configManager = configManager
+	a.diagnostics = diagnostics.New(configManager.GetConfigDir())
+	a.logInfo("startup", map[string]any{"platform": goruntime.GOOS})
 
 	// Initialize stats manager
 	statsManager, err := models.NewStatsManager(configManager.GetConfigDir())
@@ -189,22 +199,24 @@ func (a *App) startup(ctx context.Context) {
 		hotkeyType = models.DefaultRecordingHotkey()
 	}
 	a.hotkeyManager.SetHotkeyType(hotkeyType)
-	
+
 	// Apply configured cancel key
 	cancelKey := configManager.Get().CancelHotkey
 	if cancelKey == "" {
 		cancelKey = "escape"
 	}
 	a.hotkeyManager.SetCancelKey(cancelKey)
-	
+
 	// Register global hotkey
 	if err := a.hotkeyManager.Register(func() {
 		a.ToggleRecording()
-	}); err != nil {
+	}, nil); err != nil {
 		fmt.Printf("Warning: Failed to register hotkey: %v\n", err)
+		a.logWarn("hotkey_register_failed", map[string]any{"error": err.Error()})
 	} else {
 		a.hotkeyEnabled = true
 		fmt.Printf("Global hotkey registered: %s\n", hotkey.GetHotkeyDisplayName(hotkeyType))
+		a.logInfo("hotkey_registered", map[string]any{"recordingHotkey": hotkeyType})
 	}
 
 	// Load history from disk
@@ -236,7 +248,7 @@ func (a *App) GetState() AppState {
 	config := a.configManager.Get()
 	modelReady := false
 	if config.Provider == "local" {
-		modelReady = a.modelManager.IsModelDownloaded(config.Model)
+		modelReady = a.modelManager.IsModelDownloaded(config.Model) && a.localEngine != nil && a.localEngine.IsAvailable()
 	} else {
 		modelReady = a.openaiEngine.IsAvailable()
 	}
@@ -258,6 +270,24 @@ func (a *App) GetHistory() []HistoryItem {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.history
+}
+
+func (a *App) logInfo(event string, fields map[string]any) {
+	if a.diagnostics != nil {
+		a.diagnostics.Info(event, fields)
+	}
+}
+
+func (a *App) logWarn(event string, fields map[string]any) {
+	if a.diagnostics != nil {
+		a.diagnostics.Warn(event, fields)
+	}
+}
+
+func (a *App) logError(event string, fields map[string]any) {
+	if a.diagnostics != nil {
+		a.diagnostics.Error(event, fields)
+	}
 }
 
 // ClearHistory clears all history
@@ -328,7 +358,7 @@ func (a *App) saveHistory() {
 func (a *App) CopyHistoryItem(id string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	
+
 	for _, item := range a.history {
 		if item.ID == id {
 			return system.CopyToClipboard(item.Text)
@@ -340,7 +370,7 @@ func (a *App) CopyHistoryItem(id string) error {
 // DeleteHistoryItem deletes a history item by ID
 func (a *App) DeleteHistoryItem(id string) error {
 	a.mu.Lock()
-	
+
 	// Find and remove the item
 	var audioPath string
 	found := false
@@ -353,18 +383,18 @@ func (a *App) DeleteHistoryItem(id string) error {
 		}
 	}
 	a.mu.Unlock()
-	
+
 	if !found {
 		return fmt.Errorf("history item not found")
 	}
-	
+
 	// Delete the audio file if it exists
 	if audioPath != "" {
 		if err := os.Remove(audioPath); err != nil && !os.IsNotExist(err) {
 			fmt.Printf("Warning: Failed to delete audio file: %v\n", err)
 		}
 	}
-	
+
 	a.saveHistory()
 	runtime.EventsEmit(a.ctx, "historyChanged", a.history)
 	return nil
@@ -400,18 +430,18 @@ func (a *App) ShowInFolder(id string) error {
 func (a *App) GetAudioData(id string) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	
+
 	for _, item := range a.history {
 		if item.ID == id {
 			if !item.HasAudio || item.AudioPath == "" {
 				return "", fmt.Errorf("no audio available for this item")
 			}
-			
+
 			data, err := audio.LoadWAV(item.AudioPath)
 			if err != nil {
 				return "", fmt.Errorf("failed to load audio: %v", err)
 			}
-			
+
 			// Return as base64
 			return base64.StdEncoding.EncodeToString(data), nil
 		}
@@ -421,6 +451,10 @@ func (a *App) GetAudioData(id string) (string, error) {
 
 // ToggleRecording starts or stops recording
 func (a *App) ToggleRecording() error {
+	return a.toggleRecordingMode(RecordingModeNormal)
+}
+
+func (a *App) toggleRecordingMode(mode RecordingMode) error {
 	a.mu.Lock()
 	currentState := a.state
 	a.mu.Unlock()
@@ -428,35 +462,46 @@ func (a *App) ToggleRecording() error {
 	if currentState == StateRecording {
 		return a.StopRecording()
 	}
-	return a.StartRecording()
+	return a.startRecording(mode)
 }
 
 // StartRecording begins audio capture
 func (a *App) StartRecording() error {
+	return a.startRecording(RecordingModeNormal)
+}
+
+func (a *App) startRecording(mode RecordingMode) error {
 	runtime.LogInfo(a.ctx, "StartRecording called")
 	fmt.Println("StartRecording: entering function")
-	
-	// Save the current frontmost app before we do anything (for auto-paste later)
-	system.SaveFrontmostApp()
-	
+
+	if mode == RecordingModeNormal {
+		// Save the current frontmost app before we do anything (for auto-paste later).
+		system.SaveFrontmostApp()
+	}
+
 	a.mu.Lock()
+	if a.state == StateError {
+		a.state = StateReady
+		a.lastError = ""
+	}
 	if a.state != StateReady {
 		a.mu.Unlock()
 		runtime.LogWarning(a.ctx, fmt.Sprintf("Cannot start recording in state: %s", a.state))
 		return fmt.Errorf("cannot start recording in state: %s", a.state)
 	}
-	
+
 	// Check if sound is enabled
 	soundEnabled := a.configManager != nil && (a.configManager.Get().SoundEnabled == nil || *a.configManager.Get().SoundEnabled)
 	fmt.Printf("StartRecording: soundEnabled=%v\n", soundEnabled)
-	
+
 	// Set state to recording first
 	a.state = StateRecording
+	a.recordingMode = mode
 	a.lastError = ""
 	a.recordStartTime = time.Now()
 	onTrayUpdate := a.onTrayUpdate
 	a.mu.Unlock()
-	
+
 	// Play start sound (non-blocking) - afplay goes to speakers, not mic input
 	if soundEnabled {
 		fmt.Println("StartRecording: playing start sound")
@@ -474,7 +519,7 @@ func (a *App) StartRecording() error {
 
 	// Create fresh recorder for each recording session
 	a.recorder = audio.NewRecorder()
-	
+
 	// Set audio device from config if available
 	if a.configManager != nil {
 		config := a.configManager.Get()
@@ -516,6 +561,7 @@ func (a *App) StopRecording() error {
 		return fmt.Errorf("not recording")
 	}
 	recordDuration := time.Since(a.recordStartTime).Seconds()
+	mode := a.recordingMode
 	a.state = StateTranscribing
 	a.mu.Unlock()
 
@@ -539,7 +585,7 @@ func (a *App) StopRecording() error {
 		return err
 	}
 
-	go a.transcribe(samples, recordDuration)
+	go a.transcribe(samples, recordDuration, mode)
 
 	return nil
 }
@@ -552,6 +598,7 @@ func (a *App) CancelRecording() error {
 		return fmt.Errorf("not recording")
 	}
 	a.state = StateReady
+	a.recordingMode = RecordingModeNormal
 	onTrayUpdate := a.onTrayUpdate
 	a.mu.Unlock()
 
@@ -572,7 +619,6 @@ func (a *App) CancelRecording() error {
 
 	a.emitState()
 
-
 	return nil
 }
 
@@ -587,36 +633,62 @@ func (a *App) getAudioDir() string {
 }
 
 // transcribe processes the audio samples
-func (a *App) transcribe(samples []float32, duration float64) {
+func (a *App) transcribe(samples []float32, duration float64, mode RecordingMode) {
 	config := a.configManager.Get()
 
 	var text string
 	var err error
+	capturedAt := time.Now()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+
+	a.logInfo("transcription_started", map[string]any{
+		"mode":        mode,
+		"provider":    config.Provider,
+		"durationSec": fmt.Sprintf("%.2f", duration),
+		"samples":     len(samples),
+	})
 
 	if config.Provider == "openai" {
 		text, err = a.openaiEngine.Transcribe(ctx, samples)
 	} else {
 		text, err = a.localEngine.Transcribe(ctx, samples)
 	}
+	if err != nil {
+		a.logError("transcription_failed", map[string]any{"mode": mode, "provider": config.Provider, "error": err.Error()})
+	} else {
+		a.logInfo("transcription_completed", map[string]any{"mode": mode, "provider": config.Provider, "textLength": len(text)})
+	}
 
-	// Generate unique ID for this recording
-	recordingID := fmt.Sprintf("%d", time.Now().UnixNano())
+	if err == nil && a.configManager.IsObsidianExtensionInstalled() {
+		a.overlay.SetStatus("Saving to Obsidian...")
+		if notePath, writeErr := obsidian.AppendTranscription(config.ObsidianVaultPath, config.ObsidianNoteName, text, capturedAt); writeErr != nil {
+			a.logError("obsidian_write_failed", map[string]any{"error": writeErr.Error()})
+			fmt.Printf("Warning: Failed to write Obsidian note: %v\n", writeErr)
+		} else {
+			fmt.Printf("Saved Obsidian note to: %s\n", notePath)
+			a.logInfo("obsidian_write_completed", map[string]any{"notePath": notePath})
+		}
+	}
+
+	// Generate unique ID for normal recordings
+	recordingID := fmt.Sprintf("%d", capturedAt.UnixNano())
 
 	// Save audio to file
 	var audioPath string
 	var hasAudio bool
-	audioDir := a.getAudioDir()
-	if audioDir != "" {
-		audioPath = filepath.Join(audioDir, recordingID+".wav")
-		if saveErr := audio.SaveWAV(audioPath, samples); saveErr != nil {
-			fmt.Printf("Warning: Failed to save audio: %v\n", saveErr)
-			audioPath = ""
-		} else {
-			hasAudio = true
-			fmt.Printf("Saved audio to: %s\n", audioPath)
+	if err == nil {
+		audioDir := a.getAudioDir()
+		if audioDir != "" {
+			audioPath = filepath.Join(audioDir, recordingID+".wav")
+			if saveErr := audio.SaveWAV(audioPath, samples); saveErr != nil {
+				fmt.Printf("Warning: Failed to save audio: %v\n", saveErr)
+				audioPath = ""
+			} else {
+				hasAudio = true
+				fmt.Printf("Saved audio to: %s\n", audioPath)
+			}
 		}
 	}
 
@@ -625,21 +697,27 @@ func (a *App) transcribe(samples []float32, duration float64) {
 	if err != nil {
 		a.state = StateError
 		a.lastError = err.Error()
+		a.logError("recording_finished_with_error", map[string]any{"mode": mode, "error": err.Error()})
+		if text != "" {
+			a.lastTranscript = text
+		}
 	} else {
 		a.state = StateReady
 		a.lastTranscript = text
+		a.lastError = ""
+		a.logInfo("recording_finished", map[string]any{"mode": mode})
 
 		// Add to history
 		historyItem := HistoryItem{
 			ID:        recordingID,
 			Text:      text,
-			Timestamp: time.Now().Format("2 Jan 2006, 3:04 pm"),
+			Timestamp: capturedAt.Format("2 Jan 2006, 3:04 pm"),
 			Duration:  duration,
 			AudioPath: audioPath,
 			HasAudio:  hasAudio,
 		}
 		a.history = append([]HistoryItem{historyItem}, a.history...)
-		
+
 		// Keep only last 50 items
 		if len(a.history) > 50 {
 			// Delete audio files for items being removed
@@ -678,6 +756,7 @@ func (a *App) transcribe(samples []float32, duration float64) {
 			go system.CopyToClipboard(text)
 		}
 	}
+	a.recordingMode = RecordingModeNormal
 	a.mu.Unlock()
 
 	// Update tray icon
@@ -812,7 +891,7 @@ func (a *App) GetStats() UsageStats {
 	if a.statsManager == nil {
 		return UsageStats{}
 	}
-	
+
 	stats := a.statsManager.Get()
 	return UsageStats{
 		AverageWPM:         a.statsManager.GetAverageWPM(),
@@ -831,14 +910,17 @@ func (a *App) SetRecordingHotkey(keyName string) error {
 	if keyName == "" {
 		return fmt.Errorf("hotkey cannot be empty")
 	}
-	
-	// Update the hotkey manager
+
+	// Save first so the live hotkey state cannot drift if persistence fails.
+	if err := a.configManager.SetRecordingHotkey(keyName); err != nil {
+		return err
+	}
+
 	if a.hotkeyManager != nil {
 		a.hotkeyManager.SetHotkeyType(keyName)
 	}
-	
-	// Save to config
-	return a.configManager.SetRecordingHotkey(keyName)
+
+	return nil
 }
 
 // GetRecordingHotkey returns the current recording hotkey string
@@ -860,14 +942,17 @@ func (a *App) SetCancelHotkey(keyName string) error {
 	if keyName == "" {
 		return fmt.Errorf("cancel hotkey cannot be empty")
 	}
-	
-	// Update the hotkey manager
+
+	// Save first so the live hotkey state cannot drift if persistence fails.
+	if err := a.configManager.SetCancelHotkey(keyName); err != nil {
+		return err
+	}
+
 	if a.hotkeyManager != nil {
 		a.hotkeyManager.SetCancelKey(keyName)
 	}
-	
-	// Save to config
-	return a.configManager.SetCancelHotkey(keyName)
+
+	return nil
 }
 
 // GetCancelHotkey returns the current cancel hotkey string
@@ -880,6 +965,67 @@ func (a *App) GetCancelHotkey() string {
 		return cancelKey
 	}
 	return "escape"
+}
+
+// SetObsidianVaultPath sets the Obsidian vault path for notes.
+func (a *App) SetObsidianVaultPath(path string) error {
+	if !a.IsObsidianExtensionInstalled() {
+		return fmt.Errorf("install the Obsidian extension before setting a vault path")
+	}
+	return a.configManager.SetObsidianVaultPath(strings.TrimSpace(path))
+}
+
+// SetObsidianNoteName sets the Obsidian note filename template.
+func (a *App) SetObsidianNoteName(name string) error {
+	if !a.IsObsidianExtensionInstalled() {
+		return fmt.Errorf("install the Obsidian extension before setting a note name")
+	}
+	return a.configManager.SetObsidianNoteName(strings.TrimSpace(name))
+}
+
+// GetObsidianNoteName returns the configured Obsidian note filename template.
+func (a *App) GetObsidianNoteName() string {
+	if a.configManager != nil && strings.TrimSpace(a.configManager.Get().ObsidianNoteName) != "" {
+		return a.configManager.Get().ObsidianNoteName
+	}
+	return obsidian.DefaultNoteName
+}
+
+// GetObsidianVaultPath returns the configured Obsidian vault path.
+func (a *App) GetObsidianVaultPath() string {
+	if a.configManager != nil && a.configManager.IsObsidianExtensionInstalled() {
+		return a.configManager.Get().ObsidianVaultPath
+	}
+	return ""
+}
+
+// IsObsidianExtensionInstalled returns whether the Obsidian integration is enabled.
+func (a *App) IsObsidianExtensionInstalled() bool {
+	return a.configManager != nil && a.configManager.IsObsidianExtensionInstalled()
+}
+
+// InstallObsidianExtension enables the Obsidian integration.
+func (a *App) InstallObsidianExtension() error {
+	if a.configManager == nil {
+		return fmt.Errorf("config manager not initialized")
+	}
+	return a.configManager.InstallObsidianExtension()
+}
+
+// UninstallObsidianExtension disables the Obsidian integration and clears its settings.
+func (a *App) UninstallObsidianExtension() error {
+	if a.configManager == nil {
+		return fmt.Errorf("config manager not initialized")
+	}
+	if err := a.configManager.UninstallObsidianExtension(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// GetObsidianDestinationPreview returns the vault-relative daily Obsidian note path.
+func (a *App) GetObsidianDestinationPreview() string {
+	return obsidian.TranscriptionsRelativePath(a.GetObsidianNoteName(), time.Now())
 }
 
 // GetPlatform returns the current operating system
@@ -920,31 +1066,31 @@ func (a *App) ReregisterHotkey() error {
 	if a.hotkeyManager == nil {
 		return fmt.Errorf("hotkey manager not initialized")
 	}
-	
+
 	// Unregister current hotkey
 	a.hotkeyManager.Unregister()
-	
+
 	// Re-apply hotkey settings
 	hotkeyType := a.configManager.Get().RecordingHotkey
 	if hotkeyType == "" {
 		hotkeyType = models.DefaultRecordingHotkey()
 	}
 	a.hotkeyManager.SetHotkeyType(hotkeyType)
-	
+
 	cancelKey := a.configManager.Get().CancelHotkey
 	if cancelKey == "" {
 		cancelKey = "escape"
 	}
 	a.hotkeyManager.SetCancelKey(cancelKey)
-	
+
 	// Register the hotkey
 	if err := a.hotkeyManager.Register(func() {
 		a.ToggleRecording()
-	}); err != nil {
+	}, nil); err != nil {
 		a.hotkeyEnabled = false
 		return fmt.Errorf("failed to register hotkey: %w", err)
 	}
-	
+
 	a.hotkeyEnabled = true
 	fmt.Printf("Hotkey re-registered: %s\n", hotkey.GetHotkeyDisplayName(hotkeyType))
 	return nil

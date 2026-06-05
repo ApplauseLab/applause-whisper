@@ -3,6 +3,7 @@ import './App.css';
 import { RecordingOverlay } from './RecordingOverlay';
 import { Onboarding } from './Onboarding';
 import packageJson from '../package.json';
+import obsidianLogo from './assets/obsidian-logo.svg';
 // Sound playback is now handled natively in Go (internal/sounds)
 import {
   GetState,
@@ -27,11 +28,18 @@ import {
   GetStats,
   GetRecordingHotkey,
   SetRecordingHotkey,
+  GetObsidianVaultPath,
+  SetObsidianVaultPath,
+  GetObsidianNoteName,
+  SetObsidianNoteName,
+  GetObsidianDestinationPreview,
   GetCancelHotkey,
   SetCancelHotkey,
   GetPlatform,
   Quit,
   IsOnboardingCompleted,
+  InstallObsidianExtension,
+  UninstallObsidianExtension,
 } from '../wailsjs/go/main/App';
 import { EventsOn, LogInfo } from '../wailsjs/runtime/runtime';
 
@@ -61,6 +69,9 @@ interface Config {
   audioInputDevice?: string;
   autoPaste: boolean;
   soundEnabled?: boolean;
+  obsidianVaultPath?: string;
+  obsidianNoteName?: string;
+  obsidianExtensionInstalled: boolean;
 }
 
 interface HistoryItem {
@@ -93,7 +104,11 @@ interface UsageStats {
   totalWords: number;
 }
 
-type Page = 'home' | 'settings' | 'history';
+type Page = 'home' | 'extensions' | 'settings' | 'history';
+
+const getErrorMessage = (error: unknown): string => {
+  return error instanceof Error ? error.message : String(error);
+};
 
 function App() {
   const [appState, setAppState] = useState<AppState>({
@@ -127,6 +142,10 @@ function App() {
     totalWords: 0,
   });
   const [currentHotkey, setCurrentHotkey] = useState<string>('rightoption');
+  const [obsidianVaultPath, setObsidianVaultPathState] = useState<string>('');
+  const [obsidianNoteName, setObsidianNoteNameState] = useState<string>('Transcriptions {{date}}');
+  const [obsidianDestination, setObsidianDestination] = useState<string>('Yap/Transcriptions YYYY-MM-DD.md');
+  const [managingObsidian, setManagingObsidian] = useState<boolean>(false);
   const [cancelHotkey, setCancelHotkey] = useState<string>('escape');
   const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null);
   const [platform, setPlatform] = useState<string>('darwin');
@@ -150,11 +169,16 @@ function App() {
       setConfig(cfg);
       setApiKey(cfg.openaiApiKey || '');
       setSelectedAudioDevice(cfg.audioInputDevice || '');
+      setObsidianVaultPathState(cfg.obsidianVaultPath || '');
+      setObsidianNoteNameState(cfg.obsidianNoteName || 'Transcriptions {{date}}');
     });
     GetHistory().then((h: HistoryItem[]) => setHistory(h));
     GetAudioInputDevices().then((devices: AudioInputDevice[]) => setAudioDevices(devices));
     GetStats().then((s: UsageStats) => setStats(s));
     GetRecordingHotkey().then((h: string) => setCurrentHotkey(h));
+    GetObsidianVaultPath().then((path: string) => setObsidianVaultPathState(path));
+    GetObsidianNoteName().then((name: string) => setObsidianNoteNameState(name));
+    GetObsidianDestinationPreview().then((path: string) => setObsidianDestination(path));
     GetCancelHotkey().then((h: string) => setCancelHotkey(h));
 
     LogInfo('Setting up EventsOn for stateChanged');
@@ -351,20 +375,82 @@ function App() {
   }, []);
 
   const handleHotkeyChange = useCallback(async (keyName: string) => {
-    setCurrentHotkey(keyName);
     try {
       await SetRecordingHotkey(keyName);
+      setCurrentHotkey(keyName);
     } catch (error) {
       console.error('Failed to set hotkey:', error);
+      alert(getErrorMessage(error));
+      GetRecordingHotkey().then((h: string) => setCurrentHotkey(h));
+    }
+  }, []);
+
+  const handleObsidianVaultPathChange = useCallback(async (path: string) => {
+    setObsidianVaultPathState(path);
+    try {
+      await SetObsidianVaultPath(path);
+      GetConfig().then((c: Config) => setConfig(c));
+    } catch (error) {
+      console.error('Failed to set Obsidian vault path:', error);
+    }
+  }, []);
+
+  const handleObsidianNoteNameChange = useCallback(async (name: string) => {
+    setObsidianNoteNameState(name);
+    try {
+      await SetObsidianNoteName(name);
+      const cfg = await GetConfig();
+      setConfig(cfg);
+      const savedName = await GetObsidianNoteName();
+      setObsidianNoteNameState(savedName);
+      const preview = await GetObsidianDestinationPreview();
+      setObsidianDestination(preview);
+    } catch (error) {
+      console.error('Failed to set Obsidian note name:', error);
+      alert(getErrorMessage(error));
+      GetObsidianNoteName().then((savedName: string) => setObsidianNoteNameState(savedName));
+      GetObsidianDestinationPreview().then((path: string) => setObsidianDestination(path));
+    }
+  }, []);
+
+  const handleInstallObsidian = useCallback(async () => {
+    try {
+      await InstallObsidianExtension();
+      const cfg = await GetConfig();
+      setConfig(cfg);
+      setManagingObsidian(true);
+    } catch (error) {
+      console.error('Failed to install Obsidian extension:', error);
+      alert(getErrorMessage(error));
+    }
+  }, []);
+
+  const handleUninstallObsidian = useCallback(async () => {
+    if (!confirm('Uninstall the Obsidian extension? This clears its vault path.')) {
+      return;
+    }
+    try {
+      await UninstallObsidianExtension();
+      const cfg = await GetConfig();
+      setConfig(cfg);
+      setObsidianVaultPathState('');
+      setObsidianNoteNameState('Transcriptions {{date}}');
+      GetObsidianDestinationPreview().then((path: string) => setObsidianDestination(path));
+      setManagingObsidian(false);
+    } catch (error) {
+      console.error('Failed to uninstall Obsidian extension:', error);
+      alert(getErrorMessage(error));
     }
   }, []);
 
   const handleCancelKeyChange = useCallback(async (keyName: string) => {
-    setCancelHotkey(keyName);
     try {
       await SetCancelHotkey(keyName);
+      setCancelHotkey(keyName);
     } catch (error) {
       console.error('Failed to set cancel key:', error);
+      alert(getErrorMessage(error));
+      GetCancelHotkey().then((h: string) => setCancelHotkey(h));
     }
   }, []);
 
@@ -528,6 +614,7 @@ function App() {
 
   const currentModel = models.find(m => m.name === appState.currentModel);
   const needsDownload = appState.currentProvider === 'local' && currentModel && !currentModel.downloaded;
+  const obsidianInstalled = config?.obsidianExtensionInstalled === true || Boolean(config?.obsidianVaultPath);
 
   const handleOnboardingComplete = useCallback(() => {
     setShowOnboarding(false);
@@ -570,6 +657,23 @@ function App() {
           </button>
 
           <button 
+            className={`nav-item ${currentPage === 'extensions' ? 'active' : ''}`}
+            onClick={() => setCurrentPage('extensions')}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 2v6"/>
+              <path d="M12 16v6"/>
+              <path d="M4.93 4.93l4.24 4.24"/>
+              <path d="M14.83 14.83l4.24 4.24"/>
+              <path d="M2 12h6"/>
+              <path d="M16 12h6"/>
+              <path d="M4.93 19.07l4.24-4.24"/>
+              <path d="M14.83 9.17l4.24-4.24"/>
+            </svg>
+            <span>Extensions</span>
+          </button>
+
+          <button 
             className={`nav-item ${currentPage === 'settings' ? 'active' : ''}`}
             onClick={() => setCurrentPage('settings')}
           >
@@ -594,7 +698,7 @@ function App() {
 
         <div className="sidebar-footer">
           <div className="hotkey-hint">
-            <kbd>Right ⌥</kbd>
+            <kbd>{getHotkeyShortDisplay(currentHotkey)}</kbd>
             <span>to record</span>
           </div>
         </div>
@@ -605,7 +709,7 @@ function App() {
         {/* Draggable header area */}
         <div className="main-header" style={{ '--wails-draggable': 'drag' } as React.CSSProperties}>
           <span className="page-title">
-            {currentPage === 'home' ? 'Home' : currentPage === 'settings' ? 'Settings' : 'History'}
+            {currentPage === 'home' ? 'Home' : currentPage === 'extensions' ? 'Extensions' : currentPage === 'settings' ? 'Settings' : 'History'}
           </span>
         </div>
 
@@ -743,6 +847,84 @@ function App() {
                 </svg>
                 <span>{appState.error}</span>
               </div>
+            )}
+          </div>
+        )}
+
+        {currentPage === 'extensions' && (
+          <div className="extensions-page">
+            <div className="extensions-grid">
+              <div className="extension-card">
+                <div className="extension-icon obsidian-icon">
+                  <img src={obsidianLogo} alt="Obsidian" />
+                </div>
+                <div className="extension-content">
+                  <div className="extension-title-row">
+                    <h2>Obsidian</h2>
+                    <span className={`extension-status ${obsidianInstalled ? 'installed' : ''}`}>
+                      {obsidianInstalled ? 'Installed' : 'Available'}
+                    </span>
+                  </div>
+                  <p>Save every transcription directly into your Obsidian vault as local Markdown daily notes.</p>
+                </div>
+                <div className="extension-actions">
+                  {obsidianInstalled ? (
+                    <>
+                      <button className="secondary-button" onClick={() => setManagingObsidian(!managingObsidian)}>
+                        {managingObsidian ? 'Hide Settings' : 'Manage'}
+                      </button>
+                      <button className="danger-button" onClick={handleUninstallObsidian}>Uninstall</button>
+                    </>
+                  ) : (
+                    <button className="primary-button" onClick={handleInstallObsidian}>Install</button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {obsidianInstalled && managingObsidian && (
+              <section className="settings-section extension-settings">
+                <h2>Obsidian Settings</h2>
+
+                <div className="setting-row">
+                  <div className="setting-info">
+                    <label>Obsidian Vault Path</label>
+                    <p>Transcriptions are appended to daily notes in the Yap folder in this vault</p>
+                  </div>
+                  <div className="api-key-input vault-path-input">
+                    <input
+                      type="text"
+                      value={obsidianVaultPath}
+                      onChange={(e) => setObsidianVaultPathState(e.target.value)}
+                      placeholder="/Users/you/Documents/Obsidian/Vault"
+                    />
+                    <button onClick={() => handleObsidianVaultPathChange(obsidianVaultPath)}>Save</button>
+                  </div>
+                </div>
+
+                <div className="setting-row">
+                  <div className="setting-info">
+                    <label>Note Name</label>
+                    <p>Stored inside the Yap folder. Use {'{{date}}'} for a daily note.</p>
+                  </div>
+                  <div className="api-key-input vault-path-input">
+                    <input
+                      type="text"
+                      value={obsidianNoteName}
+                      onChange={(e) => setObsidianNoteNameState(e.target.value)}
+                      placeholder="Transcriptions {{date}}"
+                    />
+                    <button onClick={() => handleObsidianNoteNameChange(obsidianNoteName)}>Save</button>
+                  </div>
+                </div>
+
+                <div className="setting-row">
+                  <div className="setting-info">
+                    <label>Destination</label>
+                    <p className="destination-preview">{obsidianDestination}</p>
+                  </div>
+                </div>
+              </section>
             )}
           </div>
         )}

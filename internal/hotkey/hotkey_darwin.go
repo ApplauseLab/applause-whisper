@@ -15,13 +15,18 @@ static id gKeyEventMonitor = nil;
 static id gLocalKeyEventMonitor = nil;
 static id gLocalFlagsMonitor = nil;
 static BOOL gHotkeyKeyDown = NO;
+static BOOL gBrainCacheKeyDown = NO;
 static BOOL gCancelKeyEnabled = NO;
 static UInt16 gCurrentHotkeyCode = 0x3D;  // Default: Right Option
+static UInt16 gCurrentBrainCacheCode = 0;
 static UInt16 gCurrentCancelCode = 53;     // Default: Escape
 static BOOL gHotkeyIsModifier = YES;       // Is the hotkey a modifier key?
+static BOOL gBrainCacheIsModifier = NO;
+static BOOL gBrainCacheEnabled = NO;
 static BOOL gCancelIsModifier = NO;        // Is the cancel key a modifier?
 
 extern void goHotkeyPressed(void);
+extern void goBrainCachePressed(void);
 extern void goCancelPressed(void);
 
 // Common key codes
@@ -128,24 +133,25 @@ static void stopAllMonitoring(void) {
         gLocalFlagsMonitor = nil;
     }
     gHotkeyKeyDown = NO;
+    gBrainCacheKeyDown = NO;
     gCancelKeyEnabled = NO;
 }
 
 static void startMonitoring(void) {
     stopAllMonitoring();
-    
+
     // Check accessibility permissions first
     if (!hasAccessibilityPermissions()) {
         NSLog(@"Cannot start monitoring without accessibility permissions");
         return;
     }
-    
+
     // Monitor for modifier keys (flagsChanged events)
     gEventMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged
         handler:^(NSEvent *event) {
             UInt16 keyCode = [event keyCode];
             NSEventModifierFlags flags = [event modifierFlags];
-            
+
             // Check hotkey (if it's a modifier)
             if (gHotkeyIsModifier && keyCode == gCurrentHotkeyCode) {
                 NSEventModifierFlags modFlag = getModifierFlag(keyCode);
@@ -158,7 +164,19 @@ static void startMonitoring(void) {
                     gHotkeyKeyDown = NO;
                 }
             }
-            
+
+            if (gBrainCacheEnabled && gBrainCacheIsModifier && keyCode == gCurrentBrainCacheCode) {
+                NSEventModifierFlags modFlag = getModifierFlag(keyCode);
+                if (flags & modFlag) {
+                    if (!gBrainCacheKeyDown) {
+                        gBrainCacheKeyDown = YES;
+                        goBrainCachePressed();
+                    }
+                } else {
+                    gBrainCacheKeyDown = NO;
+                }
+            }
+
             // Check cancel key (if it's a modifier)
             if (gCancelKeyEnabled && gCancelIsModifier && keyCode == gCurrentCancelCode) {
                 NSEventModifierFlags modFlag = getModifierFlag(keyCode);
@@ -167,43 +185,52 @@ static void startMonitoring(void) {
                 }
             }
         }];
-    
+
     // Monitor for regular keys (keyDown events)
     gKeyEventMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskKeyDown
         handler:^(NSEvent *event) {
             UInt16 keyCode = [event keyCode];
-            
+
             // Check hotkey (if it's NOT a modifier)
             if (!gHotkeyIsModifier && keyCode == gCurrentHotkeyCode) {
                 goHotkeyPressed();
             }
-            
+
+            if (gBrainCacheEnabled && !gBrainCacheIsModifier && keyCode == gCurrentBrainCacheCode) {
+                goBrainCachePressed();
+            }
+
             // Check cancel key (if it's NOT a modifier)
             if (gCancelKeyEnabled && !gCancelIsModifier && keyCode == gCurrentCancelCode) {
                 goCancelPressed();
             }
         }];
-    
+
     // Local monitor for regular keys when this app has focus
     gLocalKeyEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
         handler:^NSEvent *(NSEvent *event) {
             UInt16 keyCode = [event keyCode];
-            
+
             // Check hotkey (if it's NOT a modifier)
             if (!gHotkeyIsModifier && keyCode == gCurrentHotkeyCode) {
                 goHotkeyPressed();
                 return nil; // Consume event
             }
-            
+
+            if (gBrainCacheEnabled && !gBrainCacheIsModifier && keyCode == gCurrentBrainCacheCode) {
+                goBrainCachePressed();
+                return nil; // Consume event
+            }
+
             // Check cancel key (if it's NOT a modifier)
             if (gCancelKeyEnabled && !gCancelIsModifier && keyCode == gCurrentCancelCode) {
                 goCancelPressed();
                 return nil; // Consume event
             }
-            
+
             return event;
         }];
-    
+
     // Also add local monitor for modifier keys (flagsChanged) when app has focus
     // This ensures modifier hotkeys work even when the app window is focused
     if (gLocalFlagsMonitor != nil) {
@@ -214,7 +241,7 @@ static void startMonitoring(void) {
         handler:^NSEvent *(NSEvent *event) {
             UInt16 keyCode = [event keyCode];
             NSEventModifierFlags flags = [event modifierFlags];
-            
+
             // Check hotkey (if it's a modifier)
             if (gHotkeyIsModifier && keyCode == gCurrentHotkeyCode) {
                 NSEventModifierFlags modFlag = getModifierFlag(keyCode);
@@ -227,7 +254,19 @@ static void startMonitoring(void) {
                     gHotkeyKeyDown = NO;
                 }
             }
-            
+
+            if (gBrainCacheEnabled && gBrainCacheIsModifier && keyCode == gCurrentBrainCacheCode) {
+                NSEventModifierFlags modFlag = getModifierFlag(keyCode);
+                if (flags & modFlag) {
+                    if (!gBrainCacheKeyDown) {
+                        gBrainCacheKeyDown = YES;
+                        goBrainCachePressed();
+                    }
+                } else {
+                    gBrainCacheKeyDown = NO;
+                }
+            }
+
             // Check cancel key (if it's a modifier)
             if (gCancelKeyEnabled && gCancelIsModifier && keyCode == gCurrentCancelCode) {
                 NSEventModifierFlags modFlag = getModifierFlag(keyCode);
@@ -235,10 +274,10 @@ static void startMonitoring(void) {
                     goCancelPressed();
                 }
             }
-            
+
             return event;
         }];
-    
+
     NSLog(@"Key monitoring started - hotkey: %d, cancel: %d", gCurrentHotkeyCode, gCurrentCancelCode);
 }
 
@@ -247,6 +286,14 @@ static void setHotkeyCode(UInt16 keyCode) {
     gHotkeyIsModifier = isModifierKeyCode(keyCode);
     gHotkeyKeyDown = NO;
     NSLog(@"Hotkey set to keyCode: %d (isModifier: %d)", keyCode, gHotkeyIsModifier);
+}
+
+static void setBrainCacheCode(UInt16 keyCode, int enabled) {
+    gCurrentBrainCacheCode = keyCode;
+    gBrainCacheIsModifier = isModifierKeyCode(keyCode);
+    gBrainCacheEnabled = enabled ? YES : NO;
+    gBrainCacheKeyDown = NO;
+    NSLog(@"BrainCache hotkey set to keyCode: %d (enabled: %d, isModifier: %d)", keyCode, gBrainCacheEnabled, gBrainCacheIsModifier);
 }
 
 static void setCancelCode(UInt16 keyCode) {
@@ -274,17 +321,29 @@ import (
 )
 
 var (
-	callbackMu       sync.Mutex
-	hotkeyCallback   func()
-	hotkeyC          = make(chan struct{}, 1)
-	cancelCallbackMu sync.Mutex
-	cancelCallback   func()
+	callbackMu           sync.Mutex
+	hotkeyCallback       func()
+	hotkeyC              = make(chan struct{}, 1)
+	brainCacheCallbackMu sync.Mutex
+	brainCacheCallback   func()
+	brainCacheC          = make(chan struct{}, 1)
+	cancelCallbackMu     sync.Mutex
+	cancelCallback       func()
 )
 
 //export goHotkeyPressed
 func goHotkeyPressed() {
 	select {
 	case hotkeyC <- struct{}{}:
+	default:
+		// Channel full, dropping event
+	}
+}
+
+//export goBrainCachePressed
+func goBrainCachePressed() {
+	select {
+	case brainCacheC <- struct{}{}:
 	default:
 		// Channel full, dropping event
 	}
@@ -305,11 +364,12 @@ type Callback func()
 
 // Manager handles global hotkey registration
 type Manager struct {
-	mu         sync.Mutex
-	running    bool
-	stopC      chan struct{}
-	hotkeyStr  string
-	cancelStr  string
+	mu            sync.Mutex
+	running       bool
+	stopC         chan struct{}
+	hotkeyStr     string
+	brainCacheStr string
+	cancelStr     string
 }
 
 // NewManager creates a new hotkey manager
@@ -321,7 +381,7 @@ func NewManager() *Manager {
 }
 
 // Register registers the global hotkey
-func (m *Manager) Register(cb Callback) error {
+func (m *Manager) Register(cb Callback, brainCacheCb Callback) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -332,11 +392,20 @@ func (m *Manager) Register(cb Callback) error {
 	callbackMu.Lock()
 	hotkeyCallback = cb
 	callbackMu.Unlock()
+	brainCacheCallbackMu.Lock()
+	brainCacheCallback = brainCacheCb
+	brainCacheCallbackMu.Unlock()
 
 	// Set the hotkey code
 	keyCode := KeyNameToCode(m.hotkeyStr)
 	C.setHotkeyCode(C.UInt16(keyCode))
-	
+	if m.brainCacheStr != "" {
+		brainCacheCode := KeyNameToCode(m.brainCacheStr)
+		C.setBrainCacheCode(C.UInt16(brainCacheCode), C.int(1))
+	} else {
+		C.setBrainCacheCode(C.UInt16(0), C.int(0))
+	}
+
 	// Set the cancel key code
 	cancelCode := KeyNameToCode(m.cancelStr)
 	C.setCancelCode(C.UInt16(cancelCode))
@@ -354,6 +423,13 @@ func (m *Manager) Register(cb Callback) error {
 				callbackMu.Lock()
 				cb := hotkeyCallback
 				callbackMu.Unlock()
+				if cb != nil {
+					cb()
+				}
+			case <-brainCacheC:
+				brainCacheCallbackMu.Lock()
+				cb := brainCacheCallback
+				brainCacheCallbackMu.Unlock()
 				if cb != nil {
 					cb()
 				}
@@ -386,27 +462,47 @@ func (m *Manager) Unregister() error {
 func (m *Manager) SetHotkeyType(hotkeyName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	m.hotkeyStr = strings.ToLower(hotkeyName)
 	keyCode := KeyNameToCode(m.hotkeyStr)
 	C.setHotkeyCode(C.UInt16(keyCode))
-	
+
 	if m.running {
 		C.startMonitoring()
 	}
-	
+
 	fmt.Printf("Hotkey set to: %s (code: %d)\n", m.hotkeyStr, keyCode)
+}
+
+// SetBrainCacheHotkey sets the BrainCache hotkey by name. Empty disables it.
+func (m *Manager) SetBrainCacheHotkey(hotkeyName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.brainCacheStr = strings.ToLower(strings.TrimSpace(hotkeyName))
+	if m.brainCacheStr == "" {
+		C.setBrainCacheCode(C.UInt16(0), C.int(0))
+	} else {
+		keyCode := KeyNameToCode(m.brainCacheStr)
+		C.setBrainCacheCode(C.UInt16(keyCode), C.int(1))
+	}
+
+	if m.running {
+		C.startMonitoring()
+	}
+
+	fmt.Printf("BrainCache hotkey set to: %s\n", m.brainCacheStr)
 }
 
 // SetCancelKey sets the cancel hotkey by name
 func (m *Manager) SetCancelKey(keyName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	m.cancelStr = strings.ToLower(keyName)
 	cancelCode := KeyNameToCode(m.cancelStr)
 	C.setCancelCode(C.UInt16(cancelCode))
-	
+
 	fmt.Printf("Cancel key set to: %s (code: %d)\n", m.cancelStr, cancelCode)
 }
 
@@ -422,14 +518,14 @@ func (m *Manager) EnableCancelKey(cb func()) {
 	cancelCallbackMu.Lock()
 	cancelCallback = cb
 	cancelCallbackMu.Unlock()
-	
+
 	C.enableCancelKey()
 }
 
 // DisableCancelKey stops monitoring for the cancel key
 func (m *Manager) DisableCancelKey() {
 	C.disableCancelKey()
-	
+
 	cancelCallbackMu.Lock()
 	cancelCallback = nil
 	cancelCallbackMu.Unlock()
@@ -474,7 +570,7 @@ func KeyNameToCode(name string) uint16 {
 		return 0x3F
 	case "capslock":
 		return 0x39
-	
+
 	// Special keys
 	case "escape", "esc":
 		return 0x35
@@ -488,7 +584,7 @@ func KeyNameToCode(name string) uint16 {
 		return 0x33
 	case "forwarddelete":
 		return 0x75
-	
+
 	// Arrow keys
 	case "left", "arrowleft":
 		return 0x7B
@@ -498,7 +594,7 @@ func KeyNameToCode(name string) uint16 {
 		return 0x7E
 	case "down", "arrowdown":
 		return 0x7D
-	
+
 	// Function keys
 	case "f1":
 		return 0x7A
@@ -524,7 +620,7 @@ func KeyNameToCode(name string) uint16 {
 		return 0x67
 	case "f12":
 		return 0x6F
-	
+
 	// Letter keys
 	case "a":
 		return 0x00
@@ -578,7 +674,7 @@ func KeyNameToCode(name string) uint16 {
 		return 0x10
 	case "z":
 		return 0x06
-	
+
 	// Number keys
 	case "0":
 		return 0x1D
@@ -600,7 +696,7 @@ func KeyNameToCode(name string) uint16 {
 		return 0x1C
 	case "9":
 		return 0x19
-	
+
 	default:
 		return 0x3D // Default to right option
 	}

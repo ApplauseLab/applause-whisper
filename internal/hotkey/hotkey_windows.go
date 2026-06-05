@@ -90,16 +90,19 @@ type Callback func()
 
 // Manager handles global hotkey registration
 type Manager struct {
-	mu             sync.Mutex
-	running        bool
-	hotkeyCode     uint32
-	cancelCode     uint32
-	hotkeyCallback Callback
-	cancelCallback func()
-	cancelEnabled  bool
-	threadId       uint32
-	hotkeyStr      string
-	cancelStr      string
+	mu                 sync.Mutex
+	running            bool
+	hotkeyCode         uint32
+	brainCacheCode     uint32
+	cancelCode         uint32
+	hotkeyCallback     Callback
+	brainCacheCallback Callback
+	cancelCallback     func()
+	cancelEnabled      bool
+	threadId           uint32
+	hotkeyStr          string
+	brainCacheStr      string
+	cancelStr          string
 }
 
 // Global manager pointer for the callback
@@ -138,6 +141,12 @@ func keyboardProc(nCode int32, wParam uintptr, lParam uintptr) uintptr {
 					}
 				}
 
+				if m.brainCacheStr != "" && kbStruct.VkCode == m.brainCacheCode {
+					if m.brainCacheCallback != nil {
+						go m.brainCacheCallback()
+					}
+				}
+
 				// Check cancel key
 				if m.cancelEnabled && kbStruct.VkCode == m.cancelCode {
 					if m.cancelCallback != nil {
@@ -153,14 +162,18 @@ func keyboardProc(nCode int32, wParam uintptr, lParam uintptr) uintptr {
 }
 
 // Register registers the global hotkey
-func (m *Manager) Register(cb Callback) error {
+func (m *Manager) Register(cb Callback, brainCacheCb Callback) error {
 	m.mu.Lock()
 	if m.running {
 		m.mu.Unlock()
 		return nil
 	}
 	m.hotkeyCallback = cb
+	m.brainCacheCallback = brainCacheCb
 	m.hotkeyCode = KeyNameToCode(m.hotkeyStr)
+	if m.brainCacheStr != "" {
+		m.brainCacheCode = KeyNameToCode(m.brainCacheStr)
+	}
 	m.cancelCode = KeyNameToCode(m.cancelStr)
 	m.mu.Unlock()
 
@@ -232,6 +245,21 @@ func (m *Manager) Register(cb Callback) error {
 	}
 
 	return nil
+}
+
+// SetBrainCacheHotkey sets the BrainCache hotkey by name. Empty disables it.
+func (m *Manager) SetBrainCacheHotkey(hotkeyName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.brainCacheStr = strings.ToLower(strings.TrimSpace(hotkeyName))
+	if m.brainCacheStr != "" {
+		m.brainCacheCode = KeyNameToCode(m.brainCacheStr)
+	} else {
+		m.brainCacheCode = 0
+	}
+
+	fmt.Printf("BrainCache hotkey set to: %s (code: %d)\n", m.brainCacheStr, m.brainCacheCode)
 }
 
 // Unregister removes the hotkey

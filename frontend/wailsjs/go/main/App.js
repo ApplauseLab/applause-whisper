@@ -62,6 +62,18 @@ export function GetModels() {
   return window['go']['main']['App']['GetModels']();
 }
 
+export function GetObsidianDestinationPreview() {
+  return window['go']['main']['App']['GetObsidianDestinationPreview']();
+}
+
+export function GetObsidianNoteName() {
+  return window['go']['main']['App']['GetObsidianNoteName']();
+}
+
+export function GetObsidianVaultPath() {
+  return window['go']['main']['App']['GetObsidianVaultPath']();
+}
+
 export function GetPlatform() {
   return window['go']['main']['App']['GetPlatform']();
 }
@@ -86,8 +98,16 @@ export function Hide() {
   return window['go']['main']['App']['Hide']();
 }
 
+export function InstallObsidianExtension() {
+  return window['go']['main']['App']['InstallObsidianExtension']();
+}
+
 export function IsModelDownloaded(arg1) {
   return window['go']['main']['App']['IsModelDownloaded'](arg1);
+}
+
+export function IsObsidianExtensionInstalled() {
+  return window['go']['main']['App']['IsObsidianExtensionInstalled']();
 }
 
 export function IsOnboardingCompleted() {
@@ -134,6 +154,14 @@ export function SetModel(arg1) {
   return window['go']['main']['App']['SetModel'](arg1);
 }
 
+export function SetObsidianNoteName(arg1) {
+  return window['go']['main']['App']['SetObsidianNoteName'](arg1);
+}
+
+export function SetObsidianVaultPath(arg1) {
+  return window['go']['main']['App']['SetObsidianVaultPath'](arg1);
+}
+
 export function SetOnboardingCompleted(arg1) {
   return window['go']['main']['App']['SetOnboardingCompleted'](arg1);
 }
@@ -176,4 +204,8 @@ export function StopRecording() {
 
 export function ToggleRecording() {
   return window['go']['main']['App']['ToggleRecording']();
+}
+
+export function UninstallObsidianExtension() {
+  return window['go']['main']['App']['UninstallObsidianExtension']();
 }
