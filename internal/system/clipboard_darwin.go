@@ -11,6 +11,9 @@ package system
 #include <Cocoa/Cocoa.h>
 #include <unistd.h>
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 // Check if we have accessibility permissions
 int hasAccessibilityForPaste(void) {
     // Check without prompting
@@ -92,6 +95,8 @@ int simulatePasteKeystroke(void) {
     NSLog(@"simulatePasteKeystroke: done");
     return 1;
 }
+
+#pragma clang diagnostic pop
 */
 import "C"
 
