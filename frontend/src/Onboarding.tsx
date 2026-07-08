@@ -16,7 +16,7 @@ import {
   GetRecordingHotkeyDisplayName,
   GetPlatform,
 } from '../wailsjs/go/main/App';
-import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
+import { EventsOn, LogError, LogInfo } from '../wailsjs/runtime/runtime';
 
 interface ModelInfo {
   name: string;
@@ -49,6 +49,10 @@ type Provider = 'local' | 'openai';
 type HotkeyTestState = 'waiting' | 'recording' | 'success';
 
 export function Onboarding({ onComplete }: OnboardingProps) {
+  useEffect(() => {
+    LogInfo('[frontend] Onboarding component mounted');
+  }, []);
+
   const [step, setStep] = useState<Step>('welcome');
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('base.en');
@@ -63,6 +67,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
   const [platform, setPlatform] = useState<string>('darwin');
   const [hotkeyTestState, setHotkeyTestState] = useState<HotkeyTestState>('waiting');
   const [testTranscript, setTestTranscript] = useState<string>('');
+  const [hotkeyTestError, setHotkeyTestError] = useState<string>('');
   const hotkeyTestStateRef = useRef<HotkeyTestState>('waiting');
 
   useEffect(() => {
@@ -107,14 +112,14 @@ export function Onboarding({ onComplete }: OnboardingProps) {
       setDownloadError(data.error);
     };
 
-    EventsOn('downloadProgress', progressHandler);
-    EventsOn('downloadComplete', completeHandler);
-    EventsOn('downloadError', errorHandler);
+    const cleanupProgress = EventsOn('downloadProgress', progressHandler);
+    const cleanupComplete = EventsOn('downloadComplete', completeHandler);
+    const cleanupError = EventsOn('downloadError', errorHandler);
 
     return () => {
-      EventsOff('downloadProgress');
-      EventsOff('downloadComplete');
-      EventsOff('downloadError');
+      cleanupProgress();
+      cleanupComplete();
+      cleanupError();
     };
   }, []);
 
@@ -218,29 +223,33 @@ export function Onboarding({ onComplete }: OnboardingProps) {
       // Reset test state when entering this step
       setHotkeyTestState('waiting');
       setTestTranscript('');
+      setHotkeyTestError('');
       hotkeyTestStateRef.current = 'waiting';
       
       // Make sure hotkey is registered
-      ReregisterHotkey().catch(console.error);
+      ReregisterHotkey().catch((err) => LogError(`[frontend] ReregisterHotkey failed: ${err}`));
       
       const stateHandler = (state: AppState) => {
         if (state.state === 'recording' && hotkeyTestStateRef.current === 'waiting') {
           setHotkeyTestState('recording');
+          setHotkeyTestError('');
           hotkeyTestStateRef.current = 'recording';
-        } else if (state.state === 'ready' && hotkeyTestStateRef.current === 'recording') {
+        } else if (state.state === 'transcribing' && hotkeyTestStateRef.current === 'recording') {
           setHotkeyTestState('success');
           hotkeyTestStateRef.current = 'success';
-          // Capture the transcript from the test recording
+        } else if (state.state === 'ready' && hotkeyTestStateRef.current === 'success') {
           if (state.lastTranscript) {
             setTestTranscript(state.lastTranscript);
           }
+        } else if (state.state === 'error' && hotkeyTestStateRef.current === 'recording') {
+          setHotkeyTestState('waiting');
+          setHotkeyTestError(state.error || 'Recording failed. Check microphone permission and try again.');
+          hotkeyTestStateRef.current = 'waiting';
         }
       };
       
-      EventsOn('stateChanged', stateHandler);
-      return () => {
-        EventsOff('stateChanged');
-      };
+      const cleanup = EventsOn('stateChanged', stateHandler);
+      return cleanup;
     }
   }, [step]);
 
@@ -767,7 +776,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
 
       {hotkeyTestState === 'waiting' && (
         <div className="hotkey-test-hint">
-          <p>Having trouble? Make sure you granted Accessibility permission.</p>
+          <p>{hotkeyTestError || 'Having trouble? Make sure you granted Accessibility permission.'}</p>
         </div>
       )}
       

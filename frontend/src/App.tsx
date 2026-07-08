@@ -33,7 +33,7 @@ import {
   Quit,
   IsOnboardingCompleted,
 } from '../wailsjs/go/main/App';
-import { EventsOn, LogInfo } from '../wailsjs/runtime/runtime';
+import { EventsOn, LogDebug, LogError, LogInfo } from '../wailsjs/runtime/runtime';
 
 interface AppState {
   state: string;
@@ -96,6 +96,10 @@ interface UsageStats {
 type Page = 'home' | 'settings' | 'history';
 
 function App() {
+  useEffect(() => {
+    LogInfo('[frontend] App component mounted');
+  }, []);
+
   const [appState, setAppState] = useState<AppState>({
     state: 'ready',
     recordingTime: 0,
@@ -144,6 +148,7 @@ function App() {
   }, []);
 
   useEffect(() => {
+    LogInfo('[frontend] App initial data load started');
     GetState().then((state: AppState) => setAppState(state));
     GetModels().then((models: ModelInfo[]) => setModels(models));
     GetConfig().then((cfg: Config) => {
@@ -156,13 +161,14 @@ function App() {
     GetStats().then((s: UsageStats) => setStats(s));
     GetRecordingHotkey().then((h: string) => setCurrentHotkey(h));
     GetCancelHotkey().then((h: string) => setCancelHotkey(h));
+    LogInfo('[frontend] App initial data load requested');
 
-    LogInfo('Setting up EventsOn for stateChanged');
+    LogInfo('[frontend] Setting up EventsOn for stateChanged');
     const cleanup = EventsOn('stateChanged', (state: AppState) => {
-      LogInfo('stateChanged event received: ' + state.state);
+      LogInfo('[frontend] stateChanged event received: ' + state.state);
       setAppState(state);
     });
-    LogInfo('EventsOn setup complete');
+    LogInfo('[frontend] EventsOn setup complete');
     EventsOn('historyChanged', (h: HistoryItem[]) => {
       setHistory(h);
       if (h.length > 0 && !selectedHistory) {
@@ -223,11 +229,11 @@ function App() {
       }
       // Sound playback is handled in Go before recording starts
       await ToggleRecording();
-    } catch (err) { console.error(err); }
+    } catch (err) { LogError(`[frontend] ToggleRecording failed: ${err}`); }
   }, [appState.state]);
 
   const handleCancelRecording = useCallback(async () => {
-    try { await CancelRecording(); } catch (err) { console.error(err); }
+    try { await CancelRecording(); } catch (err) { LogError(`[frontend] CancelRecording failed: ${err}`); }
   }, []);
 
   // Global escape key handler - always active at app level
@@ -253,7 +259,7 @@ function App() {
   }, [audioSource]);
 
   const playAudio = useCallback(async (id: string) => {
-    console.log('playAudio called with id:', id);
+    LogDebug(`[frontend] playAudio called with id: ${id}`);
     
     // Stop any currently playing audio - wrap in try-catch to handle already-stopped sources
     if (audioSource) {
@@ -267,9 +273,9 @@ function App() {
 
     try {
       // Get audio data as base64
-      console.log('Fetching audio data...');
+      LogDebug('[frontend] Fetching audio data');
       const base64Data = await GetAudioData(id);
-      console.log('Got audio data, length:', base64Data.length);
+      LogDebug(`[frontend] Got audio data, length: ${base64Data.length}`);
       
       // Decode base64 to binary
       const binaryString = atob(base64Data);
@@ -277,7 +283,7 @@ function App() {
       for (let i = 0; i < binaryString.length; i++) {
         bytes[i] = binaryString.charCodeAt(i);
       }
-      console.log('Decoded bytes:', bytes.length);
+      LogDebug(`[frontend] Decoded bytes: ${bytes.length}`);
       
       // Create or reuse AudioContext (recreate if closed)
       let ctx = audioContext;
@@ -285,7 +291,7 @@ function App() {
         ctx = new AudioContext();
         setAudioContext(ctx);
       }
-      console.log('AudioContext state:', ctx.state);
+      LogDebug(`[frontend] AudioContext state: ${ctx.state}`);
       
       // Resume if suspended (needed for some browsers)
       if (ctx.state === 'suspended') {
@@ -293,9 +299,9 @@ function App() {
       }
       
       // Decode audio data
-      console.log('Decoding audio buffer...');
+      LogDebug('[frontend] Decoding audio buffer');
       const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
-      console.log('Audio buffer decoded, duration:', audioBuffer.duration);
+      LogDebug(`[frontend] Audio buffer decoded, duration: ${audioBuffer.duration}`);
       
       // Create and play source
       const source = ctx.createBufferSource();
@@ -306,12 +312,12 @@ function App() {
         setAudioSource(null);
       };
       source.start();
-      console.log('Audio playback started');
+      LogDebug('[frontend] Audio playback started');
       
       setAudioSource(source);
       setIsPlaying(true);
     } catch (err) {
-      console.error('Failed to play audio:', err);
+      LogError(`[frontend] Failed to play audio: ${err}`);
       setIsPlaying(false);
     }
   }, [audioContext, audioSource]);
@@ -355,7 +361,7 @@ function App() {
     try {
       await SetRecordingHotkey(keyName);
     } catch (error) {
-      console.error('Failed to set hotkey:', error);
+      LogError(`[frontend] Failed to set hotkey: ${error}`);
     }
   }, []);
 
@@ -364,7 +370,7 @@ function App() {
     try {
       await SetCancelHotkey(keyName);
     } catch (error) {
-      console.error('Failed to set cancel key:', error);
+      LogError(`[frontend] Failed to set cancel key: ${error}`);
     }
   }, []);
 

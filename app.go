@@ -15,6 +15,7 @@ import (
 
 	"yap/internal/audio"
 	"yap/internal/hotkey"
+	"yap/internal/logger"
 	"yap/internal/models"
 	"yap/internal/overlay"
 	"yap/internal/sounds"
@@ -94,7 +95,7 @@ type App struct {
 	recordStartTime time.Time
 	hotkeyEnabled   bool
 	history         []HistoryItem
-	
+
 	// Tray callback to update icon
 	onTrayUpdate func(recording bool)
 }
@@ -108,40 +109,41 @@ func NewApp() *App {
 		state:         StateReady,
 		history:       make([]HistoryItem, 0),
 	}
-	
+
 	// Set up overlay stop callback
 	app.overlay.SetStopCallback(func() {
 		app.ToggleRecording()
 	})
-	
+
 	// Set up overlay cancel callback
 	app.overlay.SetCancelCallback(func() {
 		app.CancelRecording()
 	})
-	
+
 	return app
 }
 
 // startup is called when the app starts
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	runtime.LogInfo(a.ctx, "OnStartup: initializing")
 
 	// Initialize PortAudio
 	if err := audio.Initialize(); err != nil {
-		fmt.Printf("Warning: Failed to initialize audio: %v\n", err)
+		runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to initialize audio: %v", err))
 	}
 
 	// Initialize native sounds
 	if err := sounds.Init(); err != nil {
-		fmt.Printf("Warning: Failed to initialize sounds: %v\n", err)
+		runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to initialize sounds: %v", err))
 	} else {
-		fmt.Println("Native sounds initialized successfully")
+		runtime.LogInfo(a.ctx, "Native sounds initialized successfully")
 	}
 
 	// Initialize config manager
 	configManager, err := models.NewConfigManager()
 	if err != nil {
-		fmt.Printf("Warning: Failed to initialize config: %v\n", err)
+		runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to initialize config: %v", err))
 		return
 	}
 	a.configManager = configManager
@@ -149,20 +151,20 @@ func (a *App) startup(ctx context.Context) {
 	// Initialize stats manager
 	statsManager, err := models.NewStatsManager(configManager.GetConfigDir())
 	if err != nil {
-		fmt.Printf("Warning: Failed to initialize stats manager: %v\n", err)
+		runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to initialize stats manager: %v", err))
 	} else {
 		a.statsManager = statsManager
 	}
 
 	// Audio device preference is applied in StartRecording when recorder is created
 	if deviceName := configManager.Get().AudioInputDevice; deviceName != "" {
-		fmt.Printf("Will use audio input device: %s\n", deviceName)
+		runtime.LogInfo(a.ctx, fmt.Sprintf("Will use audio input device: %s", deviceName))
 	}
 
 	// Initialize model manager
 	modelManager, err := models.NewManager(configManager.GetModelsDir())
 	if err != nil {
-		fmt.Printf("Warning: Failed to initialize model manager: %v\n", err)
+		runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to initialize model manager: %v", err))
 		return
 	}
 	a.modelManager = modelManager
@@ -176,11 +178,9 @@ func (a *App) startup(ctx context.Context) {
 	// Check accessibility permissions without prompting.
 	// Onboarding handles the explicit permission request UX.
 	if !hotkey.HasAccessibilityPermissions() {
-		fmt.Println("WARNING: Accessibility permissions not granted!")
-		fmt.Println("Escape key cancel and auto-paste features will not work.")
-		fmt.Println("Please grant permissions in System Preferences > Privacy & Security > Accessibility")
+		runtime.LogWarning(a.ctx, "Accessibility permissions not granted; escape cancel and auto-paste may not work")
 	} else {
-		fmt.Println("Accessibility permissions granted")
+		runtime.LogInfo(a.ctx, "Accessibility permissions granted")
 	}
 
 	// Apply configured hotkey type before registering
@@ -189,30 +189,37 @@ func (a *App) startup(ctx context.Context) {
 		hotkeyType = models.DefaultRecordingHotkey()
 	}
 	a.hotkeyManager.SetHotkeyType(hotkeyType)
-	
+
 	// Apply configured cancel key
 	cancelKey := configManager.Get().CancelHotkey
 	if cancelKey == "" {
 		cancelKey = "escape"
 	}
 	a.hotkeyManager.SetCancelKey(cancelKey)
-	
+
 	// Register global hotkey
 	if err := a.hotkeyManager.Register(func() {
 		a.ToggleRecording()
 	}); err != nil {
-		fmt.Printf("Warning: Failed to register hotkey: %v\n", err)
+		runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to register hotkey: %v", err))
 	} else {
 		a.hotkeyEnabled = true
-		fmt.Printf("Global hotkey registered: %s\n", hotkey.GetHotkeyDisplayName(hotkeyType))
+		runtime.LogInfo(a.ctx, fmt.Sprintf("Global hotkey registered: %s", hotkey.GetHotkeyDisplayName(hotkeyType)))
 	}
 
 	// Load history from disk
 	a.loadHistory()
+	runtime.LogInfo(a.ctx, "OnStartup: complete")
+}
+
+// domReady is called when the frontend has loaded its DOM.
+func (a *App) domReady(ctx context.Context) {
+	runtime.LogInfo(ctx, "OnDomReady: frontend loaded")
 }
 
 // shutdown is called when the app closes
 func (a *App) shutdown(ctx context.Context) {
+	runtime.LogInfo(ctx, "OnShutdown: starting cleanup")
 	if a.hotkeyManager != nil {
 		a.hotkeyManager.Unregister()
 	}
@@ -221,6 +228,7 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 	audio.Terminate()
 	sounds.Cleanup()
+	runtime.LogInfo(ctx, "OnShutdown: cleanup complete")
 }
 
 // GetState returns the current app state
@@ -293,14 +301,14 @@ func (a *App) loadHistory() {
 
 	var history []HistoryItem
 	if err := json.Unmarshal(data, &history); err != nil {
-		fmt.Printf("Warning: Failed to parse history: %v\n", err)
+		runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to parse history: %v", err))
 		return
 	}
 
 	a.mu.Lock()
 	a.history = history
 	a.mu.Unlock()
-	fmt.Printf("Loaded %d history items\n", len(history))
+	runtime.LogInfo(a.ctx, fmt.Sprintf("Loaded %d history items", len(history)))
 }
 
 // saveHistory saves history to disk
@@ -315,12 +323,12 @@ func (a *App) saveHistory() {
 	a.mu.Unlock()
 
 	if err != nil {
-		fmt.Printf("Warning: Failed to serialize history: %v\n", err)
+		runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to serialize history: %v", err))
 		return
 	}
 
 	if err := os.WriteFile(path, data, 0644); err != nil {
-		fmt.Printf("Warning: Failed to save history: %v\n", err)
+		runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to save history: %v", err))
 	}
 }
 
@@ -328,7 +336,7 @@ func (a *App) saveHistory() {
 func (a *App) CopyHistoryItem(id string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	
+
 	for _, item := range a.history {
 		if item.ID == id {
 			return system.CopyToClipboard(item.Text)
@@ -340,7 +348,7 @@ func (a *App) CopyHistoryItem(id string) error {
 // DeleteHistoryItem deletes a history item by ID
 func (a *App) DeleteHistoryItem(id string) error {
 	a.mu.Lock()
-	
+
 	// Find and remove the item
 	var audioPath string
 	found := false
@@ -353,18 +361,18 @@ func (a *App) DeleteHistoryItem(id string) error {
 		}
 	}
 	a.mu.Unlock()
-	
+
 	if !found {
 		return fmt.Errorf("history item not found")
 	}
-	
+
 	// Delete the audio file if it exists
 	if audioPath != "" {
 		if err := os.Remove(audioPath); err != nil && !os.IsNotExist(err) {
-			fmt.Printf("Warning: Failed to delete audio file: %v\n", err)
+			runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to delete audio file: %v", err))
 		}
 	}
-	
+
 	a.saveHistory()
 	runtime.EventsEmit(a.ctx, "historyChanged", a.history)
 	return nil
@@ -400,18 +408,18 @@ func (a *App) ShowInFolder(id string) error {
 func (a *App) GetAudioData(id string) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	
+
 	for _, item := range a.history {
 		if item.ID == id {
 			if !item.HasAudio || item.AudioPath == "" {
 				return "", fmt.Errorf("no audio available for this item")
 			}
-			
+
 			data, err := audio.LoadWAV(item.AudioPath)
 			if err != nil {
 				return "", fmt.Errorf("failed to load audio: %v", err)
 			}
-			
+
 			// Return as base64
 			return base64.StdEncoding.EncodeToString(data), nil
 		}
@@ -434,32 +442,32 @@ func (a *App) ToggleRecording() error {
 // StartRecording begins audio capture
 func (a *App) StartRecording() error {
 	runtime.LogInfo(a.ctx, "StartRecording called")
-	fmt.Println("StartRecording: entering function")
-	
+	runtime.LogDebug(a.ctx, "StartRecording: entering function")
+
 	// Save the current frontmost app before we do anything (for auto-paste later)
 	system.SaveFrontmostApp()
-	
+
 	a.mu.Lock()
-	if a.state != StateReady {
+	if a.state != StateReady && a.state != StateError {
 		a.mu.Unlock()
 		runtime.LogWarning(a.ctx, fmt.Sprintf("Cannot start recording in state: %s", a.state))
 		return fmt.Errorf("cannot start recording in state: %s", a.state)
 	}
-	
+
 	// Check if sound is enabled
 	soundEnabled := a.configManager != nil && (a.configManager.Get().SoundEnabled == nil || *a.configManager.Get().SoundEnabled)
-	fmt.Printf("StartRecording: soundEnabled=%v\n", soundEnabled)
-	
+	runtime.LogDebug(a.ctx, fmt.Sprintf("StartRecording: soundEnabled=%v", soundEnabled))
+
 	// Set state to recording first
 	a.state = StateRecording
 	a.lastError = ""
 	a.recordStartTime = time.Now()
 	onTrayUpdate := a.onTrayUpdate
 	a.mu.Unlock()
-	
+
 	// Play start sound (non-blocking) - afplay goes to speakers, not mic input
 	if soundEnabled {
-		fmt.Println("StartRecording: playing start sound")
+		runtime.LogDebug(a.ctx, "StartRecording: playing start sound")
 		sounds.PlayStart()
 	}
 
@@ -474,7 +482,7 @@ func (a *App) StartRecording() error {
 
 	// Create fresh recorder for each recording session
 	a.recorder = audio.NewRecorder()
-	
+
 	// Set audio device from config if available
 	if a.configManager != nil {
 		config := a.configManager.Get()
@@ -499,9 +507,9 @@ func (a *App) StartRecording() error {
 	a.overlay.Show()
 
 	// Enable cancel key to cancel recording (native/global)
-	fmt.Println("DEBUG: Enabling cancel key")
+	runtime.LogDebug(a.ctx, "Enabling cancel key")
 	a.hotkeyManager.EnableCancelKey(func() {
-		fmt.Println("DEBUG: Cancel key callback triggered!")
+		runtime.LogDebug(a.ctx, "Cancel key callback triggered")
 		a.CancelRecording()
 	})
 
@@ -572,7 +580,6 @@ func (a *App) CancelRecording() error {
 
 	a.emitState()
 
-
 	return nil
 }
 
@@ -612,11 +619,11 @@ func (a *App) transcribe(samples []float32, duration float64) {
 	if audioDir != "" {
 		audioPath = filepath.Join(audioDir, recordingID+".wav")
 		if saveErr := audio.SaveWAV(audioPath, samples); saveErr != nil {
-			fmt.Printf("Warning: Failed to save audio: %v\n", saveErr)
+			runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to save audio: %v", saveErr))
 			audioPath = ""
 		} else {
 			hasAudio = true
-			fmt.Printf("Saved audio to: %s\n", audioPath)
+			runtime.LogInfo(a.ctx, fmt.Sprintf("Saved audio to: %s", audioPath))
 		}
 	}
 
@@ -639,7 +646,7 @@ func (a *App) transcribe(samples []float32, duration float64) {
 			HasAudio:  hasAudio,
 		}
 		a.history = append([]HistoryItem{historyItem}, a.history...)
-		
+
 		// Keep only last 50 items
 		if len(a.history) > 50 {
 			// Delete audio files for items being removed
@@ -660,21 +667,21 @@ func (a *App) transcribe(samples []float32, duration float64) {
 		}
 
 		// Copy to clipboard and optionally paste
-		fmt.Printf("DEBUG: AutoPaste=%v, text length=%d\n", config.AutoPaste, len(text))
+		runtime.LogDebug(a.ctx, fmt.Sprintf("AutoPaste=%v, text length=%d", config.AutoPaste, len(text)))
 		if config.AutoPaste {
 			go func(textToPaste string) {
 				// Wait for the overlay to hide and the previous app to regain focus
-				fmt.Println("DEBUG: Waiting 500ms before paste...")
+				runtime.LogDebug(a.ctx, "Waiting 500ms before paste")
 				time.Sleep(500 * time.Millisecond)
-				fmt.Println("DEBUG: Calling CopyAndPaste now")
+				runtime.LogDebug(a.ctx, "Calling CopyAndPaste now")
 				if err := system.CopyAndPaste(textToPaste); err != nil {
-					fmt.Printf("Failed to paste: %v\n", err)
+					runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to paste: %v", err))
 				} else {
-					fmt.Println("DEBUG: CopyAndPaste succeeded")
+					runtime.LogDebug(a.ctx, "CopyAndPaste succeeded")
 				}
 			}(text)
 		} else {
-			fmt.Println("DEBUG: AutoPaste disabled, only copying to clipboard")
+			runtime.LogDebug(a.ctx, "AutoPaste disabled, only copying to clipboard")
 			go system.CopyToClipboard(text)
 		}
 	}
@@ -812,7 +819,7 @@ func (a *App) GetStats() UsageStats {
 	if a.statsManager == nil {
 		return UsageStats{}
 	}
-	
+
 	stats := a.statsManager.Get()
 	return UsageStats{
 		AverageWPM:         a.statsManager.GetAverageWPM(),
@@ -831,12 +838,12 @@ func (a *App) SetRecordingHotkey(keyName string) error {
 	if keyName == "" {
 		return fmt.Errorf("hotkey cannot be empty")
 	}
-	
+
 	// Update the hotkey manager
 	if a.hotkeyManager != nil {
 		a.hotkeyManager.SetHotkeyType(keyName)
 	}
-	
+
 	// Save to config
 	return a.configManager.SetRecordingHotkey(keyName)
 }
@@ -860,12 +867,12 @@ func (a *App) SetCancelHotkey(keyName string) error {
 	if keyName == "" {
 		return fmt.Errorf("cancel hotkey cannot be empty")
 	}
-	
+
 	// Update the hotkey manager
 	if a.hotkeyManager != nil {
 		a.hotkeyManager.SetCancelKey(keyName)
 	}
-	
+
 	// Save to config
 	return a.configManager.SetCancelHotkey(keyName)
 }
@@ -885,6 +892,11 @@ func (a *App) GetCancelHotkey() string {
 // GetPlatform returns the current operating system
 func (a *App) GetPlatform() string {
 	return goruntime.GOOS
+}
+
+// GetLogsDir returns the directory where debug logs are written.
+func (a *App) GetLogsDir() string {
+	return logger.GetLogsDir()
 }
 
 // GetRecordingHotkeyDisplayName returns the display name for the current hotkey
@@ -908,7 +920,7 @@ func (a *App) RequestAccessibilityPermission() bool {
 	if granted {
 		// Re-register hotkey now that we have permissions
 		if err := a.ReregisterHotkey(); err != nil {
-			fmt.Printf("Warning: Failed to re-register hotkey after permission grant: %v\n", err)
+			runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to re-register hotkey after permission grant: %v", err))
 		}
 	}
 	return granted
@@ -920,23 +932,23 @@ func (a *App) ReregisterHotkey() error {
 	if a.hotkeyManager == nil {
 		return fmt.Errorf("hotkey manager not initialized")
 	}
-	
+
 	// Unregister current hotkey
 	a.hotkeyManager.Unregister()
-	
+
 	// Re-apply hotkey settings
 	hotkeyType := a.configManager.Get().RecordingHotkey
 	if hotkeyType == "" {
 		hotkeyType = models.DefaultRecordingHotkey()
 	}
 	a.hotkeyManager.SetHotkeyType(hotkeyType)
-	
+
 	cancelKey := a.configManager.Get().CancelHotkey
 	if cancelKey == "" {
 		cancelKey = "escape"
 	}
 	a.hotkeyManager.SetCancelKey(cancelKey)
-	
+
 	// Register the hotkey
 	if err := a.hotkeyManager.Register(func() {
 		a.ToggleRecording()
@@ -944,9 +956,9 @@ func (a *App) ReregisterHotkey() error {
 		a.hotkeyEnabled = false
 		return fmt.Errorf("failed to register hotkey: %w", err)
 	}
-	
+
 	a.hotkeyEnabled = true
-	fmt.Printf("Hotkey re-registered: %s\n", hotkey.GetHotkeyDisplayName(hotkeyType))
+	runtime.LogInfo(a.ctx, fmt.Sprintf("Hotkey re-registered: %s", hotkey.GetHotkeyDisplayName(hotkeyType)))
 	return nil
 }
 

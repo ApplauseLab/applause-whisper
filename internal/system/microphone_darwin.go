@@ -47,23 +47,23 @@ static int requestMicrophonePermission(void) {
 import "C"
 
 func CheckMicrophonePermission() string {
-    switch int(C.microphonePermissionStatus()) {
-    case 2:
-        return "granted"
-    case 1:
-        return "denied"
-    default:
-        return "undetermined"
-    }
+	switch int(C.microphonePermissionStatus()) {
+	case 2:
+		return "granted"
+	case 1:
+		return "denied"
+	default:
+		return "undetermined"
+	}
 }
 
 func RequestMicrophonePermission() string {
-    switch int(C.requestMicrophonePermission()) {
-    case 2:
-        return "granted"
-    case 1:
-        return "denied"
-    default:
-        return "undetermined"
-    }
+	switch int(C.requestMicrophonePermission()) {
+	case 2:
+		return "granted"
+	case 1:
+		return "denied"
+	default:
+		return "undetermined"
+	}
 }
