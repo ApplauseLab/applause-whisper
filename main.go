@@ -16,7 +16,7 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-const appVersion = "0.4.0"
+var appVersion = "dev"
 
 func main() {
 	if err := filelogger.Init(); err != nil {

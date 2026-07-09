@@ -70,7 +70,7 @@ jobs:
 
       - name: Build macOS App
         run: |
-          wails build -platform darwin/arm64 -o "Yap"
+          wails build -platform darwin/arm64 -o "Yap" -ldflags "-X main.appVersion=${{ needs.prepare.outputs.version }}"
 
       - name: Bundle macOS runtime libraries
         run: |
@@ -96,15 +96,29 @@ jobs:
 
           for bin in "$APP/Contents/Resources/bin/whisper-cli" "$APP/Contents/Resources/lib"/*.dylib "$APP/Contents/Resources/libexec"/*; do
             [ -f "$bin" ] || continue
-            otool -L "$bin" | awk '/\/opt\/homebrew\/opt\/(whisper-cpp|ggml)\/lib\// {print $1}' | while read -r dep; do
+            otool -L "$bin" | awk '/\/opt\/homebrew\/(opt|Cellar)\/(whisper-cpp|ggml)\// {print $1}' | while read -r dep; do
               base="$(basename "$dep")"
               install_name_tool -change "$dep" "@loader_path/../lib/$base" "$bin" || true
             done
-            otool -L "$bin" | awk '/@rpath\/libwhisper/ {print $1}' | while read -r dep; do
+            otool -L "$bin" | awk '/@rpath\/lib(whisper|ggml)/ {print $1}' | while read -r dep; do
               base="$(basename "$dep")"
               install_name_tool -change "$dep" "@loader_path/../lib/$base" "$bin" || true
             done
           done
+
+          echo "Inspecting bundled whisper runtime dependencies"
+          for bin in "$APP/Contents/Resources/bin/whisper-cli" "$APP/Contents/Resources/lib"/*.dylib "$APP/Contents/Resources/libexec"/*; do
+            [ -f "$bin" ] || continue
+            otool -L "$bin"
+            if otool -L "$bin" | grep -E '/opt/homebrew/(opt|Cellar)/(whisper-cpp|ggml)/|@rpath/lib(whisper|ggml)' >/dev/null; then
+              echo "Unresolved bundled whisper dependency in $bin"
+              exit 1
+            fi
+          done
+
+          echo "Smoke testing bundled whisper-cli"
+          "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help.txt
+          GGML_BACKEND_PATH="$APP/Contents/Resources/libexec" "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help-with-backend.txt
 
           codesign --force --deep --sign - "$APP"
 
@@ -187,7 +201,7 @@ jobs:
 
       - name: Build Windows App
         run: |
-          wails build -platform windows/amd64 -nsis -o "Yap.exe"
+          wails build -platform windows/amd64 -nsis -o "Yap.exe" -ldflags "-X main.appVersion=${{ needs.prepare.outputs.version }}"
         env:
           CGO_ENABLED: 1
 
@@ -266,7 +280,7 @@ jobs:
 
       - name: Build Linux App
         run: |
-          wails build -platform linux/amd64 -o "yap"
+          wails build -platform linux/amd64 -o "yap" -ldflags "-X main.appVersion=${{ needs.prepare.outputs.version }}"
 
       - name: Create AppImage
         run: |
@@ -387,7 +401,7 @@ jobs:
 
       - name: Build Linux App
         run: |
-          wails build -platform linux/amd64 -o "yap" -tags webkit2_41
+          wails build -platform linux/amd64 -o "yap" -tags webkit2_41 -ldflags "-X main.appVersion=${{ needs.prepare.outputs.version }}"
 
       - name: Create AppImage
         run: |

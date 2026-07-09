@@ -73,12 +73,9 @@ func (e *LocalEngine) TranscribeWAV(ctx context.Context, wavData []byte) (string
 	)
 	cmd.Env = e.whisperEnv(os.Environ(), whisperBin)
 
-	output, err := cmd.Output()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("whisper failed: %s", string(exitErr.Stderr))
-		}
-		return "", fmt.Errorf("whisper failed: %w", err)
+		return "", e.commandError("whisper failed", err, output, whisperBin, modelPath)
 	}
 
 	// Clean up the output
@@ -106,6 +103,23 @@ func (e *LocalEngine) IsAvailable() bool {
 	}
 
 	return e.findWhisperBinary() != ""
+}
+
+// ValidateRuntime checks that the resolved whisper-cli can launch with the same
+// environment used for transcription.
+func (e *LocalEngine) ValidateRuntime(ctx context.Context) error {
+	whisperBin := e.findWhisperBinary()
+	if whisperBin == "" {
+		return fmt.Errorf("whisper-cli not found. Please install whisper.cpp or set the binary path")
+	}
+
+	cmd := exec.CommandContext(ctx, whisperBin, "--help")
+	cmd.Env = e.whisperEnv(os.Environ(), whisperBin)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return e.commandError("whisper runtime validation failed", err, output, whisperBin, e.getModelPath())
+	}
+	return nil
 }
 
 func (e *LocalEngine) findWhisperBinary() string {
@@ -220,6 +234,42 @@ func (e *LocalEngine) whisperEnv(env []string, whisperBin string) []string {
 		}
 	}
 	return env
+}
+
+func (e *LocalEngine) commandError(prefix string, err error, output []byte, whisperBin string, modelPath string) error {
+	backendPath := envValue(e.whisperEnv(os.Environ(), whisperBin), "GGML_BACKEND_PATH")
+	if backendPath == "" {
+		backendPath = "(unset)"
+	}
+
+	return fmt.Errorf(
+		"%s: %w; whisperBin=%q modelPath=%q GGML_BACKEND_PATH=%q output=%q",
+		prefix,
+		err,
+		whisperBin,
+		modelPath,
+		backendPath,
+		trimCommandOutput(string(output)),
+	)
+}
+
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return ""
+}
+
+func trimCommandOutput(output string) string {
+	output = strings.TrimSpace(output)
+	const maxLen = 4000
+	if len(output) <= maxLen {
+		return output
+	}
+	return output[:maxLen] + "..."
 }
 
 // Name returns the provider name
