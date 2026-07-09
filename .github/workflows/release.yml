@@ -116,9 +116,20 @@ jobs:
             fi
           done
 
+          CPU_BRAND="$(sysctl -n machdep.cpu.brand_string || true)"
+          case "$CPU_BRAND" in
+            *M4*) CPU_BACKEND_NAME="libggml-cpu-apple_m4.so" ;;
+            *M2*|*M3*) CPU_BACKEND_NAME="libggml-cpu-apple_m2_m3.so" ;;
+            *) CPU_BACKEND_NAME="libggml-cpu-apple_m1.so" ;;
+          esac
+          CPU_BACKEND="$APP/Contents/Resources/libexec/$CPU_BACKEND_NAME"
+          if [ ! -f "$CPU_BACKEND" ]; then
+            CPU_BACKEND="$APP/Contents/Resources/libexec/libggml-cpu-apple_m1.so"
+          fi
+
           echo "Smoke testing bundled whisper-cli"
           "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help.txt
-          GGML_BACKEND_PATH="$APP/Contents/Resources/libexec/libggml-metal.so" "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help-with-backend.txt
+          GGML_BACKEND_PATH="$CPU_BACKEND" "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help-with-backend.txt
 
           echo "Signing bundled macOS runtime files"
           for bin in "$APP/Contents/Resources/bin/whisper-cli" "$APP/Contents/Resources/lib"/*.dylib "$APP/Contents/Resources/libexec"/* "$APP/Contents/Frameworks"/*.dylib; do
@@ -131,7 +142,12 @@ jobs:
           codesign --verify --strict --verbose=2 "$APP/Contents/MacOS/Yap"
           codesign --force --sign - "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
-          GGML_BACKEND_PATH="$APP/Contents/Resources/libexec/libggml-metal.so" "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help-after-sign.txt
+          GGML_BACKEND_PATH="$CPU_BACKEND" "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help-after-sign.txt
+
+          echo "Smoke testing bundled whisper transcription startup"
+          curl -L --fail --retry 3 -o /tmp/ggml-tiny.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+          ruby -e 'File.binwrite("/tmp/yap-silence.wav", "RIFF" + [36 + 32000].pack("V") + "WAVEfmt " + [16, 1, 1, 16000, 32000, 2, 16].pack("VvvVVvv") + "data" + [32000].pack("V") + "\x00" * 32000)'
+          GGML_BACKEND_PATH="$CPU_BACKEND" "$APP/Contents/Resources/bin/whisper-cli" -m /tmp/ggml-tiny.en.bin -f /tmp/yap-silence.wav --no-timestamps -otxt --no-gpu >/tmp/yap-whisper-transcribe.txt 2>&1
 
       - name: Create DMG
         run: |

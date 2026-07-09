@@ -17,8 +17,12 @@ func TestWhisperEnvUsesBackendFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	backendPath := filepath.Join(libexecDir, "libggml-metal.so")
+	backendPath := filepath.Join(libexecDir, preferredAppleCPUBackend())
 	if err := os.WriteFile(backendPath, []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	metalPath := filepath.Join(libexecDir, "libggml-metal.so")
+	if err := os.WriteFile(metalPath, []byte("test"), 0644); err != nil {
 		t.Fatal(err)
 	}
 

@@ -65,13 +65,18 @@ func (e *LocalEngine) TranscribeWAV(ctx context.Context, wavData []byte) (string
 	}
 	tmpFile.Close()
 
-	cmd := exec.CommandContext(ctx, whisperBin,
+	args := []string{
 		"-m", modelPath,
 		"-f", tmpFile.Name(),
 		"--no-timestamps",
 		"-otxt",
-	)
-	cmd.Env = e.whisperEnv(os.Environ(), whisperBin)
+	}
+	cmdEnv := e.whisperEnv(os.Environ(), whisperBin)
+	if strings.Contains(envValue(cmdEnv, "GGML_BACKEND_PATH"), "libggml-cpu") {
+		args = append(args, "--no-gpu")
+	}
+	cmd := exec.CommandContext(ctx, whisperBin, args...)
+	cmd.Env = cmdEnv
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -225,11 +230,10 @@ func (e *LocalEngine) whisperEnv(env []string, whisperBin string) []string {
 	}
 
 	backendCandidates := []string{
-		filepath.Join(binDir, "..", "libexec", "libggml-metal.so"),
-		filepath.Join(binDir, "..", "libexec", "libggml-blas.so"),
-		filepath.Join(binDir, "..", "libexec", "libggml-cpu-apple_m4.so"),
-		filepath.Join(binDir, "..", "libexec", "libggml-cpu-apple_m2_m3.so"),
+		filepath.Join(binDir, "..", "libexec", preferredAppleCPUBackend()),
 		filepath.Join(binDir, "..", "libexec", "libggml-cpu-apple_m1.so"),
+		filepath.Join(binDir, "..", "libexec", "libggml-cpu-apple_m2_m3.so"),
+		filepath.Join(binDir, "..", "libexec", "libggml-cpu-apple_m4.so"),
 	}
 	for _, p := range backendCandidates {
 		if info, err := os.Stat(p); err == nil && !info.IsDir() {
@@ -237,6 +241,26 @@ func (e *LocalEngine) whisperEnv(env []string, whisperBin string) []string {
 		}
 	}
 	return env
+}
+
+func preferredAppleCPUBackend() string {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		return "libggml-cpu-apple_m1.so"
+	}
+
+	brand, err := exec.Command("sysctl", "-n", "machdep.cpu.brand_string").Output()
+	if err != nil {
+		return "libggml-cpu-apple_m1.so"
+	}
+	cpu := string(brand)
+	switch {
+	case strings.Contains(cpu, "M4"):
+		return "libggml-cpu-apple_m4.so"
+	case strings.Contains(cpu, "M2"), strings.Contains(cpu, "M3"):
+		return "libggml-cpu-apple_m2_m3.so"
+	default:
+		return "libggml-cpu-apple_m1.so"
+	}
 }
 
 func (e *LocalEngine) commandError(prefix string, err error, output []byte, whisperBin string, modelPath string) error {
