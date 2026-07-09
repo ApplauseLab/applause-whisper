@@ -174,6 +174,9 @@ func (a *App) startup(ctx context.Context) {
 	a.localEngine.SetModel(transcribe.Model(configManager.Get().Model))
 
 	a.openaiEngine = transcribe.NewOpenAIEngine(configManager.Get().OpenAIAPIKey)
+	if err := a.validateReadyToRecord(); err != nil {
+		runtime.LogWarning(a.ctx, fmt.Sprintf("Transcription not ready: %v", err))
+	}
 
 	// Check accessibility permissions without prompting.
 	// Onboarding handles the explicit permission request UX.
@@ -443,6 +446,15 @@ func (a *App) ToggleRecording() error {
 func (a *App) StartRecording() error {
 	runtime.LogInfo(a.ctx, "StartRecording called")
 	runtime.LogDebug(a.ctx, "StartRecording: entering function")
+	if err := a.validateReadyToRecord(); err != nil {
+		a.mu.Lock()
+		a.state = StateError
+		a.lastError = err.Error()
+		a.mu.Unlock()
+		runtime.LogWarning(a.ctx, fmt.Sprintf("StartRecording blocked: %v", err))
+		a.emitState()
+		return err
+	}
 
 	// Save the current frontmost app before we do anything (for auto-paste later)
 	system.SaveFrontmostApp()
@@ -608,6 +620,9 @@ func (a *App) transcribe(samples []float32, duration float64) {
 	} else {
 		text, err = a.localEngine.Transcribe(ctx, samples)
 	}
+	if err != nil {
+		runtime.LogWarning(a.ctx, fmt.Sprintf("Transcription failed: provider=%s model=%s duration=%.2fs samples=%d error=%v", config.Provider, config.Model, duration, len(samples), err))
+	}
 
 	// Generate unique ID for this recording
 	recordingID := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -682,7 +697,11 @@ func (a *App) transcribe(samples []float32, duration float64) {
 			}(text)
 		} else {
 			runtime.LogDebug(a.ctx, "AutoPaste disabled, only copying to clipboard")
-			go system.CopyToClipboard(text)
+			go func(textToCopy string) {
+				if err := system.CopyToClipboard(textToCopy); err != nil {
+					runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to copy to clipboard: %v", err))
+				}
+			}(text)
 		}
 	}
 	a.mu.Unlock()
@@ -703,6 +722,32 @@ func (a *App) transcribe(samples []float32, duration float64) {
 
 	a.emitState()
 	runtime.EventsEmit(a.ctx, "historyChanged", a.GetHistory())
+}
+
+func (a *App) validateReadyToRecord() error {
+	if a.configManager == nil {
+		return fmt.Errorf("configuration is not ready")
+	}
+
+	config := a.configManager.Get()
+	if config.Provider == "openai" {
+		if a.openaiEngine == nil || !a.openaiEngine.IsAvailable() {
+			return fmt.Errorf("OpenAI API key is not configured")
+		}
+		return nil
+	}
+
+	if a.modelManager == nil {
+		return fmt.Errorf("model manager is not ready")
+	}
+	if !a.modelManager.IsModelDownloaded(config.Model) {
+		return fmt.Errorf("model %q is not downloaded", config.Model)
+	}
+	if a.localEngine == nil || !a.localEngine.IsAvailable() {
+		return fmt.Errorf("local transcription is not available; install whisper-cli and download the selected model")
+	}
+
+	return nil
 }
 
 // emitState sends the current state to the frontend
@@ -734,6 +779,9 @@ func (a *App) GetModels() []ModelInfo {
 
 // SetModel changes the current model
 func (a *App) SetModel(model string) error {
+	if a.configManager.Get().Provider == "local" && !a.modelManager.IsModelDownloaded(model) {
+		return fmt.Errorf("model %q is not downloaded", model)
+	}
 	if err := a.configManager.SetModel(model); err != nil {
 		return err
 	}

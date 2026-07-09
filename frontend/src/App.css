@@ -600,6 +600,15 @@ body {
   background: var(--bg-hover);
 }
 
+.action-item.disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.action-item.disabled:hover {
+  background: var(--bg-sidebar);
+}
+
 .action-icon {
   width: 32px;
   height: 32px;

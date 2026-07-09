@@ -178,9 +178,15 @@ function App() {
       GetStats().then((s: UsageStats) => setStats(s));
     });
     EventsOn('downloadProgress', (progress: DownloadProgress) => setDownloadProgress(progress));
-    EventsOn('downloadComplete', () => {
+    EventsOn('downloadComplete', async (data: { model: string }) => {
       setDownloadProgress(null);
+      try {
+        await SetModel(data.model);
+      } catch (err) {
+        LogError(`[frontend] SetModel after download failed: ${err}`);
+      }
       GetModels().then((models: ModelInfo[]) => setModels(models));
+      GetState().then((state: AppState) => setAppState(state));
     });
     EventsOn('downloadError', (data: { model: string; error: string }) => {
       setDownloadProgress(null);
@@ -323,9 +329,15 @@ function App() {
   }, [audioContext, audioSource]);
 
   const handleModelChange = useCallback(async (model: string) => {
-    await SetModel(model);
+    const modelInfo = models.find(m => m.name === model);
+    if (modelInfo?.downloaded) {
+      await SetModel(model);
+      GetState().then((s: AppState) => setAppState(s));
+    } else {
+      await DownloadModel(model);
+    }
     GetModels().then((m: ModelInfo[]) => setModels(m));
-  }, []);
+  }, [models]);
 
   const handleProviderChange = useCallback(async (provider: string) => {
     await SetProvider(provider);
@@ -669,7 +681,10 @@ function App() {
             <div className="get-started-section">
               <h3 className="section-title">Get started</h3>
               <div className="action-list">
-                <div className="action-item" onClick={handleToggleRecording}>
+                <div
+                  className={`action-item ${needsDownload ? 'disabled' : ''}`}
+                  onClick={needsDownload ? undefined : handleToggleRecording}
+                >
                   <div className="action-icon">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <circle cx="12" cy="12" r="10"/>
@@ -678,7 +693,9 @@ function App() {
                   </div>
                   <div className="action-content">
                     <span className="action-title">Start recording</span>
-                    <span className="action-desc">Turn your voice to text with a single click</span>
+                    <span className="action-desc">
+                      {needsDownload ? 'Download selected model first' : 'Turn your voice to text with a single click'}
+                    </span>
                   </div>
                   <kbd className="action-shortcut">{getHotkeyShortDisplay(currentHotkey)}</kbd>
                 </div>

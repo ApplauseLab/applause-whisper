@@ -97,8 +97,14 @@ export function Onboarding({ onComplete }: OnboardingProps) {
       setDownloadError(null);
     };
 
-    const completeHandler = () => {
+    const completeHandler = async (data: { model: string }) => {
       setDownloadProgress(null);
+      try {
+        await SetModel(data.model);
+      } catch (err) {
+        setDownloadError(String(err));
+        return;
+      }
       // Refresh models list
       GetModels().then((modelList: ModelInfo[]) => {
         setModels(modelList);
@@ -147,9 +153,9 @@ export function Onboarding({ onComplete }: OnboardingProps) {
   }, [apiKey]);
 
   const handleModelSelect = useCallback(async () => {
-    await SetModel(selectedModel);
     const model = models.find(m => m.name === selectedModel);
     if (model?.downloaded) {
+      await SetModel(selectedModel);
       // Model already downloaded, skip to mic permission request
       setStep('micRequest');
     } else {
@@ -164,10 +170,6 @@ export function Onboarding({ onComplete }: OnboardingProps) {
     setDownloadError(null);
     await DownloadModel(selectedModel);
   }, [selectedModel]);
-
-  const handleSkipDownload = useCallback(() => {
-    setStep('micRequest');
-  }, []);
 
   const handleCheckMicPermission = useCallback(async () => {
     const status = await CheckMicrophonePermission();
@@ -201,6 +203,13 @@ export function Onboarding({ onComplete }: OnboardingProps) {
       handleCheckMicPermission();
     }
   }, [step, handleCheckMicPermission]);
+
+  // Skip the microphone prompt when macOS already has a grant for this app.
+  useEffect(() => {
+    if (step === 'micRequest' && micPermissionStatus === 'granted') {
+      setStep('micSuccess');
+    }
+  }, [step, micPermissionStatus]);
 
   // Poll for accessibility permission when on access request step
   useEffect(() => {
@@ -486,12 +495,12 @@ export function Onboarding({ onComplete }: OnboardingProps) {
           ) : downloadProgress ? (
             <>
               <h2 className="download-title">Downloading {model?.displayName}</h2>
-              <p className="download-subtitle">{model?.size} — {progress.toFixed(0)}%</p>
+              <p className="download-subtitle">A local model is required before Yap can transcribe offline. {model?.size} - {progress.toFixed(0)}%</p>
             </>
           ) : (
             <>
               <h2 className="download-title">Preparing Download</h2>
-              <p className="download-subtitle">Setting up {model?.displayName}...</p>
+              <p className="download-subtitle">A local model is required before Yap can transcribe offline.</p>
             </>
           )}
         </div>
@@ -499,18 +508,14 @@ export function Onboarding({ onComplete }: OnboardingProps) {
         <div className="step-actions">
           {downloadError ? (
             <>
-              <button className="secondary-button" onClick={handleSkipDownload}>
-                Skip for Now
+              <button className="secondary-button" onClick={() => setStep('model')}>
+                Back
               </button>
               <button className="primary-button" onClick={handleRetryDownload}>
                 Retry Download
               </button>
             </>
-          ) : (
-            <button className="secondary-button" onClick={handleSkipDownload}>
-              Skip for Now
-            </button>
-          )}
+          ) : null}
         </div>
       </div>
     );
@@ -526,11 +531,8 @@ export function Onboarding({ onComplete }: OnboardingProps) {
   }, []);
 
   const renderMicRequest = () => {
-    // If already granted, auto-advance
-    if (micPermissionStatus === 'granted') {
-      // Use effect will handle this, but also allow manual continue
-    }
-    
+    const micDenied = micPermissionStatus === 'denied';
+
     return (
       <div className="onboarding-step mic-request-step">
         {/* Pixel-art microphone illustration */}
@@ -549,17 +551,27 @@ export function Onboarding({ onComplete }: OnboardingProps) {
         </div>
         
         <div className="step-header">
-          <h2>Yap needs your microphone</h2>
-          <p>To transcribe your voice, Yap needs access to your microphone. Click below and select "Allow" in the system dialog.</p>
+          <h2>{micDenied ? 'Microphone access is blocked' : 'Yap needs your microphone'}</h2>
+          <p>
+            {micDenied
+              ? 'macOS will not show the permission dialog again. Open System Settings and enable Microphone access for Yap, then come back and re-check.'
+              : 'To transcribe your voice, Yap needs access to your microphone. Click below and select "Allow" in the system dialog.'}
+          </p>
         </div>
+
+        {micDenied && (
+          <div className="permission-warning">
+            System Settings → Privacy & Security → Microphone → Yap
+          </div>
+        )}
         
         <div className="step-actions">
           <button className="secondary-button" onClick={() => setStep(selectedProvider === 'openai' ? 'apikey' : 'model')}>
             Back
           </button>
-          {micPermissionStatus === 'granted' ? (
-            <button className="primary-button" onClick={() => setStep('micSuccess')}>
-              Continue
+          {micDenied ? (
+            <button className="primary-button" onClick={handleCheckMicPermission}>
+              Re-check Permission
             </button>
           ) : (
             <button className="primary-button" onClick={handleMicPermissionRequest}>
@@ -669,8 +681,14 @@ export function Onboarding({ onComplete }: OnboardingProps) {
         </div>
         
         <p className="access-instructions">
-          Click the button below to open System Settings, then toggle <strong>Yap</strong> on in the Accessibility list.
+          Click the button below to open System Settings, then toggle <strong>Yap</strong> on in the Accessibility list. If it is already enabled, this step will advance automatically.
         </p>
+
+        {accessibilityStatus === 'denied' && (
+          <div className="permission-warning">
+            System Settings → Privacy & Security → Accessibility → Yap
+          </div>
+        )}
         
         <div className="step-actions">
           <button className="secondary-button" onClick={() => setStep('micSuccess')}>
@@ -679,6 +697,11 @@ export function Onboarding({ onComplete }: OnboardingProps) {
           <button className="primary-button" onClick={handleRequestAccessibilityPermission}>
             Open Accessibility Settings
           </button>
+          {accessibilityStatus === 'denied' && (
+            <button className="secondary-button" onClick={handleCheckAccessibilityPermission}>
+              Re-check Permission
+            </button>
+          )}
         </div>
         
         {accessibilityStatus === 'granted' && (
