@@ -118,9 +118,20 @@ jobs:
 
           echo "Smoke testing bundled whisper-cli"
           "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help.txt
-          GGML_BACKEND_PATH="$APP/Contents/Resources/libexec" "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help-with-backend.txt
+          GGML_BACKEND_PATH="$APP/Contents/Resources/libexec/libggml-metal.so" "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help-with-backend.txt
 
-          codesign --force --deep --sign - "$APP"
+          echo "Signing bundled macOS runtime files"
+          for bin in "$APP/Contents/Resources/bin/whisper-cli" "$APP/Contents/Resources/lib"/*.dylib "$APP/Contents/Resources/libexec"/* "$APP/Contents/Frameworks"/*.dylib; do
+            [ -f "$bin" ] || continue
+            codesign --force --sign - "$bin"
+            codesign --verify --strict --verbose=2 "$bin"
+          done
+
+          codesign --force --sign - "$APP/Contents/MacOS/Yap"
+          codesign --verify --strict --verbose=2 "$APP/Contents/MacOS/Yap"
+          codesign --force --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          GGML_BACKEND_PATH="$APP/Contents/Resources/libexec/libggml-metal.so" "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help-after-sign.txt
 
       - name: Create DMG
         run: |

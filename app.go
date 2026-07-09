@@ -746,11 +746,6 @@ func (a *App) validateReadyToRecord() error {
 	if a.localEngine == nil || !a.localEngine.IsAvailable() {
 		return fmt.Errorf("local transcription is not available; install whisper-cli and download the selected model")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := a.localEngine.ValidateRuntime(ctx); err != nil {
-		return err
-	}
 
 	return nil
 }

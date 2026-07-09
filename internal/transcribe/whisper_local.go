@@ -225,11 +225,14 @@ func (e *LocalEngine) whisperEnv(env []string, whisperBin string) []string {
 	}
 
 	backendCandidates := []string{
-		filepath.Join(binDir, "..", "libexec"),
-		filepath.Join(binDir, "..", "lib"),
+		filepath.Join(binDir, "..", "libexec", "libggml-metal.so"),
+		filepath.Join(binDir, "..", "libexec", "libggml-blas.so"),
+		filepath.Join(binDir, "..", "libexec", "libggml-cpu-apple_m4.so"),
+		filepath.Join(binDir, "..", "libexec", "libggml-cpu-apple_m2_m3.so"),
+		filepath.Join(binDir, "..", "libexec", "libggml-cpu-apple_m1.so"),
 	}
 	for _, p := range backendCandidates {
-		if info, err := os.Stat(p); err == nil && info.IsDir() {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
 			return append(env, "GGML_BACKEND_PATH="+p)
 		}
 	}
