@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -40,29 +41,7 @@ func (e *LocalEngine) Transcribe(ctx context.Context, samples []float32) (string
 
 // TranscribeWAV transcribes WAV audio data using whisper CLI
 func (e *LocalEngine) TranscribeWAV(ctx context.Context, wavData []byte) (string, error) {
-	// Check if whisper binary is available
-	whisperBin := e.whisperBin
-	if whisperBin == "" {
-		// Try to find whisper-cli in common locations
-		possiblePaths := []string{
-			"/opt/homebrew/bin/whisper-cli",
-			"/usr/local/bin/whisper-cli",
-			filepath.Join(os.Getenv("HOME"), ".local/bin/whisper-cli"),
-		}
-		for _, p := range possiblePaths {
-			if _, err := os.Stat(p); err == nil {
-				whisperBin = p
-				break
-			}
-		}
-		// Also try PATH lookup
-		if whisperBin == "" {
-			if p, err := exec.LookPath("whisper-cli"); err == nil {
-				whisperBin = p
-			}
-		}
-	}
-
+	whisperBin := e.findWhisperBinary()
 	if whisperBin == "" {
 		return "", fmt.Errorf("whisper-cli not found. Please install whisper.cpp or set the binary path")
 	}
@@ -86,13 +65,13 @@ func (e *LocalEngine) TranscribeWAV(ctx context.Context, wavData []byte) (string
 	}
 	tmpFile.Close()
 
-	// Run whisper-cli
 	cmd := exec.CommandContext(ctx, whisperBin,
 		"-m", modelPath,
 		"-f", tmpFile.Name(),
 		"--no-timestamps",
 		"-otxt",
 	)
+	cmd.Env = e.whisperEnv(os.Environ(), whisperBin)
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -126,29 +105,121 @@ func (e *LocalEngine) IsAvailable() bool {
 		return false
 	}
 
-	// Check if whisper binary is available
+	return e.findWhisperBinary() != ""
+}
+
+func (e *LocalEngine) findWhisperBinary() string {
 	if e.whisperBin != "" {
-		if _, err := exec.LookPath(e.whisperBin); err != nil {
-			return false
+		if isExecutable(e.whisperBin) {
+			return e.whisperBin
 		}
-		return true
+		if p, err := exec.LookPath(e.whisperBin); err == nil {
+			return p
+		}
 	}
 
-	// Try common paths
-	possiblePaths := []string{
-		"/opt/homebrew/bin/whisper-cli",
-		"/usr/local/bin/whisper-cli",
-	}
-	for _, p := range possiblePaths {
-		if _, err := os.Stat(p); err == nil {
-			return true
+	for _, p := range bundledWhisperCandidates() {
+		if isExecutable(p) {
+			return p
 		}
 	}
-	// Also try PATH lookup
-	if _, err := exec.LookPath("whisper-cli"); err == nil {
-		return true
+
+	for _, p := range systemWhisperCandidates() {
+		if isExecutable(p) {
+			return p
+		}
 	}
-	return false
+
+	for _, name := range whisperBinaryNames() {
+		if p, err := exec.LookPath(name); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+func bundledWhisperCandidates() []string {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	exeDir := filepath.Dir(exe)
+	names := whisperBinaryNames()
+	candidates := make([]string, 0, len(names)*4)
+	for _, name := range names {
+		switch runtime.GOOS {
+		case "darwin":
+			candidates = append(candidates,
+				filepath.Join(exeDir, "..", "Resources", "bin", name),
+				filepath.Join(exeDir, name),
+			)
+		case "windows":
+			candidates = append(candidates,
+				filepath.Join(exeDir, "bin", name),
+				filepath.Join(exeDir, name),
+			)
+		default:
+			candidates = append(candidates,
+				filepath.Join(exeDir, name),
+				filepath.Join(exeDir, "bin", name),
+				filepath.Join(exeDir, "..", "lib", "yap", "bin", name),
+			)
+		}
+	}
+	return candidates
+}
+
+func systemWhisperCandidates() []string {
+	home := os.Getenv("HOME")
+	switch runtime.GOOS {
+	case "darwin":
+		return []string{
+			"/opt/homebrew/bin/whisper-cli",
+			"/usr/local/bin/whisper-cli",
+			filepath.Join(home, ".local/bin/whisper-cli"),
+		}
+	case "windows":
+		return []string{
+			filepath.Join(os.Getenv("ProgramFiles"), "whisper.cpp", "bin", "whisper-cli.exe"),
+			filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "whisper.cpp", "whisper-cli.exe"),
+		}
+	default:
+		return []string{
+			"/usr/bin/whisper-cli",
+			"/usr/local/bin/whisper-cli",
+			filepath.Join(home, ".local/bin/whisper-cli"),
+		}
+	}
+}
+
+func whisperBinaryNames() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"whisper-cli.exe", "whisper-cli"}
+	}
+	return []string{"whisper-cli"}
+}
+
+func isExecutable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func (e *LocalEngine) whisperEnv(env []string, whisperBin string) []string {
+	binDir := filepath.Dir(whisperBin)
+	if runtime.GOOS == "windows" {
+		return append(env, "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+
+	backendCandidates := []string{
+		filepath.Join(binDir, "..", "libexec"),
+		filepath.Join(binDir, "..", "lib"),
+	}
+	for _, p := range backendCandidates {
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			return append(env, "GGML_BACKEND_PATH="+p)
+		}
+	}
+	return env
 }
 
 // Name returns the provider name
