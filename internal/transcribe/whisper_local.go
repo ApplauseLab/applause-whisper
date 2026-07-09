@@ -58,6 +58,8 @@ func (e *LocalEngine) TranscribeWAV(ctx context.Context, wavData []byte) (string
 		return "", fmt.Errorf("failed to create temp file: %w", err)
 	}
 	defer os.Remove(tmpFile.Name())
+	outputPath := tmpFile.Name() + ".txt"
+	defer os.Remove(outputPath)
 
 	if _, err := tmpFile.Write(wavData); err != nil {
 		tmpFile.Close()
@@ -70,6 +72,7 @@ func (e *LocalEngine) TranscribeWAV(ctx context.Context, wavData []byte) (string
 		"-f", tmpFile.Name(),
 		"--no-timestamps",
 		"-otxt",
+		"-of", tmpFile.Name(),
 	}
 	cmdEnv := e.whisperEnv(os.Environ(), whisperBin)
 	if strings.Contains(envValue(cmdEnv, "GGML_BACKEND_PATH"), "libggml-cpu") {
@@ -83,8 +86,12 @@ func (e *LocalEngine) TranscribeWAV(ctx context.Context, wavData []byte) (string
 		return "", e.commandError("whisper failed", err, output, whisperBin, modelPath)
 	}
 
-	// Clean up the output
-	text := strings.TrimSpace(string(output))
+	textBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read whisper output file %q: %w; command output=%q", outputPath, err, trimCommandOutput(string(output)))
+	}
+
+	text := strings.TrimSpace(string(textBytes))
 	return text, nil
 }
 
