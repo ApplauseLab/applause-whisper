@@ -59,7 +59,7 @@ jobs:
 
       - name: Install macOS dependencies
         run: |
-          brew install portaudio whisper-cpp create-dmg
+          brew install portaudio whisper-cpp libomp create-dmg
 
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
@@ -88,6 +88,7 @@ jobs:
 
           cp -L /opt/homebrew/opt/whisper-cpp/lib/libwhisper*.dylib "$APP/Contents/Resources/lib/"
           cp -L /opt/homebrew/opt/ggml/lib/libggml*.dylib "$APP/Contents/Resources/lib/"
+          cp -L /opt/homebrew/opt/libomp/lib/libomp.dylib "$APP/Contents/Resources/lib/"
           cp -L /opt/homebrew/opt/ggml/libexec/* "$APP/Contents/Resources/libexec/" || true
 
           for lib in "$APP/Contents/Resources/lib"/*.dylib; do
@@ -96,11 +97,11 @@ jobs:
 
           for bin in "$APP/Contents/Resources/bin/whisper-cli" "$APP/Contents/Resources/lib"/*.dylib "$APP/Contents/Resources/libexec"/*; do
             [ -f "$bin" ] || continue
-            otool -L "$bin" | awk '/\/opt\/homebrew\/(opt|Cellar)\/(whisper-cpp|ggml)\// {print $1}' | while read -r dep; do
+            otool -L "$bin" | awk '/\/opt\/homebrew\/(opt|Cellar)\/(whisper-cpp|ggml|libomp)\// {print $1}' | while read -r dep; do
               base="$(basename "$dep")"
               install_name_tool -change "$dep" "@loader_path/../lib/$base" "$bin" || true
             done
-            otool -L "$bin" | awk '/@rpath\/lib(whisper|ggml)/ {print $1}' | while read -r dep; do
+            otool -L "$bin" | awk '/@rpath\/lib(whisper|ggml|omp)/ {print $1}' | while read -r dep; do
               base="$(basename "$dep")"
               install_name_tool -change "$dep" "@loader_path/../lib/$base" "$bin" || true
             done
@@ -110,8 +111,8 @@ jobs:
           for bin in "$APP/Contents/Resources/bin/whisper-cli" "$APP/Contents/Resources/lib"/*.dylib "$APP/Contents/Resources/libexec"/*; do
             [ -f "$bin" ] || continue
             otool -L "$bin"
-            if otool -L "$bin" | grep -E '/opt/homebrew/(opt|Cellar)/(whisper-cpp|ggml)/|@rpath/lib(whisper|ggml)' >/dev/null; then
-              echo "Unresolved bundled whisper dependency in $bin"
+            if otool -L "$bin" | grep -E '/opt/homebrew/|/usr/local/|/Users/runner/work/|@rpath/' >/dev/null; then
+              echo "Unresolved non-system dependency in $bin"
               exit 1
             fi
           done
