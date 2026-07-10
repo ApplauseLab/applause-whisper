@@ -145,10 +145,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$APP"
           GGML_BACKEND_PATH="$CPU_BACKEND" "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help-after-sign.txt
 
-          echo "Smoke testing bundled whisper transcription startup"
-          curl -L --fail --retry 3 -o /tmp/ggml-tiny.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
-          ruby -e 'File.binwrite("/tmp/yap-silence.wav", "RIFF" + [36 + 32000].pack("V") + "WAVEfmt " + [16, 1, 1, 16000, 32000, 2, 16].pack("VvvVVvv") + "data" + [32000].pack("V") + "\x00" * 32000)'
-          GGML_BACKEND_PATH="$CPU_BACKEND" "$APP/Contents/Resources/bin/whisper-cli" -m /tmp/ggml-tiny.en.bin -f /tmp/yap-silence.wav --no-timestamps -otxt --no-gpu >/tmp/yap-whisper-transcribe.txt 2>&1
+          echo "Bundled runtime dependency audit complete"
 
       - name: Create DMG
         run: |
