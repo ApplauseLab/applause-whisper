@@ -141,7 +141,7 @@ jobs:
 
           codesign --force --sign - "$APP/Contents/MacOS/Yap"
           codesign --verify --strict --verbose=2 "$APP/Contents/MacOS/Yap"
-          codesign --force --sign - "$APP"
+          codesign --force --deep --sign - "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
           GGML_BACKEND_PATH="$CPU_BACKEND" "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help-after-sign.txt
 

@@ -681,7 +681,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
         </div>
         
         <p className="access-instructions">
-          Click the button below to open System Settings, then toggle <strong>Yap</strong> on in the Accessibility list. If it is already enabled, this step will advance automatically.
+          Click the button below to open System Settings, then toggle <strong>Yap</strong> on in the Accessibility list. If Yap already appears enabled but this step does not advance, toggle it off and back on.
         </p>
 
         {accessibilityStatus === 'denied' && (
