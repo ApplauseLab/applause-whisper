@@ -30,6 +30,9 @@ import {
   GetCancelHotkey,
   SetCancelHotkey,
   GetPlatform,
+  CheckAccessibilityPermission,
+  RequestAccessibilityPermission,
+  ReregisterHotkey,
   Quit,
   IsOnboardingCompleted,
 } from '../wailsjs/go/main/App';
@@ -94,6 +97,7 @@ interface UsageStats {
 }
 
 type Page = 'home' | 'settings' | 'history';
+type AccessibilityRecoveryState = 'checking' | 'needed' | 'recovering' | 'error' | 'complete' | 'not-needed';
 
 function App() {
   useEffect(() => {
@@ -136,8 +140,11 @@ function App() {
   const [platform, setPlatform] = useState<string>('darwin');
   const [isCapturingHotkey, setIsCapturingHotkey] = useState<boolean>(false);
   const [isCapturingCancelKey, setIsCapturingCancelKey] = useState<boolean>(false);
+  const [accessibilityRecovery, setAccessibilityRecovery] = useState<AccessibilityRecoveryState>('checking');
+  const [accessibilityRecoveryError, setAccessibilityRecoveryError] = useState('');
   const hotkeyInputRef = useRef<HTMLDivElement>(null);
   const cancelKeyInputRef = useRef<HTMLDivElement>(null);
+  const accessibilityRecoveryInFlightRef = useRef(false);
 
   // Check if onboarding is needed on mount and get platform
   useEffect(() => {
@@ -146,6 +153,97 @@ function App() {
     });
     GetPlatform().then((p: string) => setPlatform(p));
   }, []);
+
+  const finishAccessibilityRecovery = useCallback(async () => {
+    if (accessibilityRecoveryInFlightRef.current) return;
+    accessibilityRecoveryInFlightRef.current = true;
+    setAccessibilityRecovery('recovering');
+    setAccessibilityRecoveryError('');
+    try {
+      await ReregisterHotkey();
+      const state = await GetState() as AppState;
+      if (!state.hotkeyEnabled) {
+        throw new Error('Yap could not register the global hotkey');
+      }
+      setAppState(state);
+      setAccessibilityRecovery('complete');
+      LogInfo('[frontend] Accessibility recovery completed; hotkey re-registered');
+      window.setTimeout(() => setAccessibilityRecovery('not-needed'), 700);
+    } catch (err) {
+      const message = String(err);
+      setAccessibilityRecoveryError(message);
+      setAccessibilityRecovery('error');
+      LogError(`[frontend] Accessibility recovery failed: ${message}`);
+    } finally {
+      accessibilityRecoveryInFlightRef.current = false;
+    }
+  }, []);
+
+  const checkAccessibilityRecovery = useCallback(async () => {
+    try {
+      const granted = await CheckAccessibilityPermission();
+      if (granted) {
+        await finishAccessibilityRecovery();
+      } else {
+        setAccessibilityRecovery((current) => current === 'error' ? current : 'needed');
+      }
+    } catch (err) {
+      const message = String(err);
+      setAccessibilityRecoveryError(message);
+      setAccessibilityRecovery('error');
+      LogError(`[frontend] Accessibility recovery check failed: ${message}`);
+    }
+  }, [finishAccessibilityRecovery]);
+
+  const handleOpenAccessibilitySettings = useCallback(async () => {
+    setAccessibilityRecovery('recovering');
+    setAccessibilityRecoveryError('');
+    try {
+      const granted = await RequestAccessibilityPermission();
+      if (granted) {
+        await finishAccessibilityRecovery();
+      } else {
+        setAccessibilityRecovery('needed');
+      }
+    } catch (err) {
+      const message = String(err);
+      setAccessibilityRecoveryError(message);
+      setAccessibilityRecovery('error');
+      LogError(`[frontend] Opening Accessibility settings failed: ${message}`);
+    }
+  }, [finishAccessibilityRecovery]);
+
+  useEffect(() => {
+    if (showOnboarding !== false) return;
+    if (platform !== 'darwin') {
+      setAccessibilityRecovery('not-needed');
+      return;
+    }
+    CheckAccessibilityPermission().then((granted) => {
+      if (granted) {
+        setAccessibilityRecovery('not-needed');
+      } else {
+        setAccessibilityRecovery('needed');
+        LogInfo('[frontend] Showing Accessibility recovery after startup');
+      }
+    }).catch((err) => {
+      setAccessibilityRecoveryError(String(err));
+      setAccessibilityRecovery('error');
+    });
+  }, [showOnboarding, platform]);
+
+  useEffect(() => {
+    if (showOnboarding !== false || platform !== 'darwin') return;
+    if (!['needed', 'recovering', 'error'].includes(accessibilityRecovery)) return;
+
+    const interval = window.setInterval(checkAccessibilityRecovery, 1000);
+    const handleFocus = () => checkAccessibilityRecovery();
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [showOnboarding, platform, accessibilityRecovery, checkAccessibilityRecovery]);
 
   useEffect(() => {
     LogInfo('[frontend] App initial data load started');
@@ -568,6 +666,73 @@ function App() {
     return <Onboarding onComplete={handleOnboardingComplete} />;
   }
 
+  if (accessibilityRecovery === 'checking') {
+    return (
+      <div className="app-loading">
+        <div className="loading-spinner" />
+      </div>
+    );
+  }
+
+  if (accessibilityRecovery !== 'not-needed') {
+    const isRecovering = accessibilityRecovery === 'recovering';
+    const isComplete = accessibilityRecovery === 'complete';
+    return (
+      <div className="accessibility-recovery">
+        <div className="accessibility-recovery-card">
+          <div className={`accessibility-recovery-icon ${isComplete ? 'complete' : ''}`}>
+            {isComplete ? (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                <path d="M9 12h6" />
+                <path d="M12 9v6" />
+              </svg>
+            )}
+          </div>
+
+          <div className="accessibility-recovery-copy">
+            <span className="accessibility-recovery-eyebrow">One quick macOS check</span>
+            <h1>{isComplete ? 'Yap is ready again' : 'Yap needs Accessibility access again'}</h1>
+            {isComplete ? (
+              <p>Your recording hotkey has been restored. Opening Yap...</p>
+            ) : (
+              <>
+                <p>After an update, macOS can stop recognizing Yap's existing permission. Your models, history, and settings are safe.</p>
+                <div className="accessibility-recovery-steps">
+                  <span>1</span>
+                  <p>Open Accessibility Settings.</p>
+                  <span>2</span>
+                  <p>If Yap is already enabled, toggle it off and back on.</p>
+                  <span>3</span>
+                  <p>Return here. Yap will detect access automatically.</p>
+                </div>
+              </>
+            )}
+          </div>
+
+          {!isComplete && (
+            <div className="accessibility-recovery-actions">
+              <button className="recovery-primary" onClick={handleOpenAccessibilitySettings} disabled={isRecovering}>
+                {isRecovering ? 'Checking Access...' : 'Open Accessibility Settings'}
+              </button>
+              <button className="recovery-secondary" onClick={checkAccessibilityRecovery} disabled={isRecovering}>
+                Check Again
+              </button>
+            </div>
+          )}
+
+          {accessibilityRecovery === 'error' && (
+            <p className="accessibility-recovery-error">{accessibilityRecoveryError || 'Yap still cannot register the recording hotkey. Toggle access off and back on, then check again.'}</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
     <div className="app">
@@ -936,8 +1101,11 @@ function App() {
               
               <div className="hotkey-status">
                 <span className={`status ${appState.hotkeyEnabled ? 'active' : ''}`}>
-                  {appState.hotkeyEnabled ? 'Hotkeys Active' : 'Hotkeys Not Registered'}
+                  {appState.hotkeyEnabled ? 'Hotkeys Active' : 'Hotkeys Need Accessibility Access'}
                 </span>
+                {!appState.hotkeyEnabled && platform === 'darwin' && (
+                  <p>Open System Settings → Privacy &amp; Security → Accessibility, then toggle Yap off and back on.</p>
+                )}
               </div>
             </section>
 

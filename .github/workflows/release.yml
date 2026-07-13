@@ -83,8 +83,8 @@ jobs:
             "@executable_path/../Frameworks/libportaudio.2.dylib" \
             "$APP/Contents/MacOS/Yap"
 
-          cp /opt/homebrew/bin/whisper-cli "$APP/Contents/Resources/bin/"
-          chmod +x "$APP/Contents/Resources/bin/whisper-cli"
+          cp /opt/homebrew/bin/whisper-cli /opt/homebrew/bin/whisper-server "$APP/Contents/Resources/bin/"
+          chmod +x "$APP/Contents/Resources/bin/whisper-cli" "$APP/Contents/Resources/bin/whisper-server"
 
           cp -L /opt/homebrew/opt/whisper-cpp/lib/libwhisper*.dylib "$APP/Contents/Resources/lib/"
           cp -L /opt/homebrew/opt/ggml/lib/libggml*.dylib "$APP/Contents/Resources/lib/"
@@ -95,7 +95,7 @@ jobs:
             install_name_tool -id "@executable_path/../lib/$(basename "$lib")" "$lib" || true
           done
 
-          for bin in "$APP/Contents/Resources/bin/whisper-cli" "$APP/Contents/Resources/lib"/*.dylib "$APP/Contents/Resources/libexec"/*; do
+          for bin in "$APP/Contents/Resources/bin"/* "$APP/Contents/Resources/lib"/*.dylib "$APP/Contents/Resources/libexec"/*; do
             [ -f "$bin" ] || continue
             otool -L "$bin" | awk '/\/opt\/homebrew\/(opt|Cellar)\/(whisper-cpp|ggml|libomp)\// {print $1}' | while read -r dep; do
               base="$(basename "$dep")"
@@ -108,7 +108,7 @@ jobs:
           done
 
           echo "Inspecting bundled whisper runtime dependencies"
-          for bin in "$APP/Contents/Resources/bin/whisper-cli" "$APP/Contents/Resources/lib"/*.dylib "$APP/Contents/Resources/libexec"/*; do
+          for bin in "$APP/Contents/Resources/bin"/* "$APP/Contents/Resources/lib"/*.dylib "$APP/Contents/Resources/libexec"/*; do
             [ -f "$bin" ] || continue
             otool -L "$bin"
             if otool -L "$bin" | grep -E '/opt/homebrew/|/usr/local/|/Users/runner/work/|@rpath/' >/dev/null; then
@@ -131,9 +131,10 @@ jobs:
           echo "Smoke testing bundled whisper-cli"
           "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help.txt
           GGML_BACKEND_PATH="$CPU_BACKEND" "$APP/Contents/Resources/bin/whisper-cli" --help >/tmp/yap-whisper-help-with-backend.txt
+          GGML_BACKEND_PATH="$CPU_BACKEND" "$APP/Contents/Resources/bin/whisper-server" --help >/tmp/yap-whisper-server-help.txt
 
           echo "Signing bundled macOS runtime files"
-          for bin in "$APP/Contents/Resources/bin/whisper-cli" "$APP/Contents/Resources/lib"/*.dylib "$APP/Contents/Resources/libexec"/* "$APP/Contents/Frameworks"/*.dylib; do
+          for bin in "$APP/Contents/Resources/bin"/* "$APP/Contents/Resources/lib"/*.dylib "$APP/Contents/Resources/libexec"/* "$APP/Contents/Frameworks"/*.dylib; do
             [ -f "$bin" ] || continue
             codesign --force --sign - "$bin"
             codesign --verify --strict --verbose=2 "$bin"
@@ -164,6 +165,15 @@ jobs:
           if [ ! -f "Yap-${{ needs.prepare.outputs.version }}-macOS.dmg" ]; then
             hdiutil create -volname "Yap" -srcfolder "build/bin/Yap.app" -ov -format UDZO "Yap-${{ needs.prepare.outputs.version }}-macOS.dmg"
           fi
+
+          MOUNT_OUTPUT=$(hdiutil attach -readonly -nobrowse "Yap-${{ needs.prepare.outputs.version }}-macOS.dmg")
+          MOUNT_DIR=$(printf '%s\n' "$MOUNT_OUTPUT" | awk '/\/Volumes\// {print substr($0, index($0, "/Volumes/")); exit}')
+          trap 'hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1 || true' EXIT
+          test -d "$MOUNT_DIR/Yap.app"
+          test -L "$MOUNT_DIR/Applications"
+          codesign --verify --deep --strict --verbose=2 "$MOUNT_DIR/Yap.app"
+          hdiutil detach "$MOUNT_DIR"
+          trap - EXIT
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
@@ -219,8 +229,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path "build\bin\bin"
           Copy-Item "C:\vcpkg\installed\x64-windows\bin\portaudio.dll" -Destination "build\bin\"
           Copy-Item "C:\vcpkg\installed\x64-windows\tools\whisper-cpp\whisper-cli.exe" -Destination "build\bin\bin\" -ErrorAction SilentlyContinue
+          Copy-Item "C:\vcpkg\installed\x64-windows\tools\whisper-cpp\whisper-server.exe" -Destination "build\bin\bin\" -ErrorAction SilentlyContinue
           if (-not (Test-Path "build\bin\bin\whisper-cli.exe")) {
             Get-ChildItem -Path "C:\vcpkg\installed\x64-windows" -Filter "whisper-cli.exe" -Recurse | Select-Object -First 1 | Copy-Item -Destination "build\bin\bin\whisper-cli.exe"
+          }
+          if (-not (Test-Path "build\bin\bin\whisper-server.exe")) {
+            Get-ChildItem -Path "C:\vcpkg\installed\x64-windows" -Filter "whisper-server.exe" -Recurse | Select-Object -First 1 | Copy-Item -Destination "build\bin\bin\whisper-server.exe"
           }
           Get-ChildItem -Path "C:\vcpkg\installed\x64-windows\bin" -Filter "*.dll" | Where-Object { $_.Name -match "whisper|ggml|omp|openblas|blas" } | Copy-Item -Destination "build\bin\bin\" -ErrorAction SilentlyContinue
 
@@ -288,13 +302,13 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev portaudio19-dev pkg-config libfuse2 fuse cmake git build-essential
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev portaudio19-dev pkg-config libfuse2 fuse cmake git build-essential patchelf
 
       - name: Build whisper.cpp CLI
         run: |
           git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp
           cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON
-          cmake --build /tmp/whisper.cpp/build --config Release --target whisper-cli -j2
+          cmake --build /tmp/whisper.cpp/build --config Release --target whisper-cli whisper-server -j2
 
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
@@ -314,9 +328,12 @@ jobs:
           mkdir -p AppDir/usr/bin AppDir/usr/lib AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
           cp build/bin/yap AppDir/usr/bin/
           cp /tmp/whisper.cpp/build/bin/whisper-cli AppDir/usr/bin/
-          chmod +x AppDir/usr/bin/yap AppDir/usr/bin/whisper-cli
+          cp /tmp/whisper.cpp/build/bin/whisper-server AppDir/usr/bin/
+          chmod +x AppDir/usr/bin/yap AppDir/usr/bin/whisper-cli AppDir/usr/bin/whisper-server
           cp /usr/lib/x86_64-linux-gnu/libportaudio.so.2 AppDir/usr/lib/
-          ldd AppDir/usr/bin/whisper-cli | awk '/=> \/.*(whisper|ggml|gomp|openblas|blas)/ {print $3}' | xargs -r -I{} cp -L {} AppDir/usr/lib/
+          for bin in AppDir/usr/bin/whisper-cli AppDir/usr/bin/whisper-server; do
+            ldd "$bin" | awk '/=> \/.*(whisper|ggml|gomp|openblas|blas)/ {print $3}' | xargs -r -I{} cp -L {} AppDir/usr/lib/
+          done
           cat > AppDir/usr/share/applications/yap.desktop << EOF
           [Desktop Entry]
           Name=Yap
@@ -344,10 +361,18 @@ jobs:
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           PKG_NAME="yap_${VERSION}_amd64"
-          mkdir -p "${PKG_NAME}/DEBIAN" "${PKG_NAME}/usr/bin" "${PKG_NAME}/usr/share/applications" "${PKG_NAME}/usr/share/icons/hicolor/256x256/apps"
+          mkdir -p "${PKG_NAME}/DEBIAN" "${PKG_NAME}/usr/bin" "${PKG_NAME}/usr/lib/yap" "${PKG_NAME}/usr/share/applications" "${PKG_NAME}/usr/share/icons/hicolor/256x256/apps"
           cp build/bin/yap "${PKG_NAME}/usr/bin/"
           cp /tmp/whisper.cpp/build/bin/whisper-cli "${PKG_NAME}/usr/bin/"
-          chmod +x "${PKG_NAME}/usr/bin/yap" "${PKG_NAME}/usr/bin/whisper-cli"
+          cp /tmp/whisper.cpp/build/bin/whisper-server "${PKG_NAME}/usr/bin/"
+          chmod +x "${PKG_NAME}/usr/bin/yap" "${PKG_NAME}/usr/bin/whisper-cli" "${PKG_NAME}/usr/bin/whisper-server"
+          for bin in "${PKG_NAME}/usr/bin/whisper-cli" "${PKG_NAME}/usr/bin/whisper-server"; do
+            ldd "$bin" | awk '/=> \/.*(whisper|ggml|gomp|openblas|blas)/ {print $3}' | xargs -r -I{} cp -L {} "${PKG_NAME}/usr/lib/yap/"
+            patchelf --set-rpath '$ORIGIN/../lib/yap' "$bin"
+          done
+          for lib in "${PKG_NAME}/usr/lib/yap"/*; do
+            [ -f "$lib" ] && patchelf --set-rpath '$ORIGIN' "$lib" || true
+          done
           cp build/appicon.iconset/icon_256x256.png "${PKG_NAME}/usr/share/icons/hicolor/256x256/apps/yap.png"
           cat > "${PKG_NAME}/usr/share/applications/yap.desktop" << EOF
           [Desktop Entry]
@@ -409,13 +434,13 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev portaudio19-dev pkg-config libfuse2 cmake git build-essential
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev portaudio19-dev pkg-config libfuse2 cmake git build-essential patchelf
 
       - name: Build whisper.cpp CLI
         run: |
           git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp
           cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON
-          cmake --build /tmp/whisper.cpp/build --config Release --target whisper-cli -j2
+          cmake --build /tmp/whisper.cpp/build --config Release --target whisper-cli whisper-server -j2
 
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
@@ -436,9 +461,12 @@ jobs:
           mkdir -p AppDir/usr/bin AppDir/usr/lib AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
           cp build/bin/yap AppDir/usr/bin/
           cp /tmp/whisper.cpp/build/bin/whisper-cli AppDir/usr/bin/
-          chmod +x AppDir/usr/bin/yap AppDir/usr/bin/whisper-cli
+          cp /tmp/whisper.cpp/build/bin/whisper-server AppDir/usr/bin/
+          chmod +x AppDir/usr/bin/yap AppDir/usr/bin/whisper-cli AppDir/usr/bin/whisper-server
           cp /usr/lib/x86_64-linux-gnu/libportaudio.so.2 AppDir/usr/lib/
-          ldd AppDir/usr/bin/whisper-cli | awk '/=> \/.*(whisper|ggml|gomp|openblas|blas)/ {print $3}' | xargs -r -I{} cp -L {} AppDir/usr/lib/
+          for bin in AppDir/usr/bin/whisper-cli AppDir/usr/bin/whisper-server; do
+            ldd "$bin" | awk '/=> \/.*(whisper|ggml|gomp|openblas|blas)/ {print $3}' | xargs -r -I{} cp -L {} AppDir/usr/lib/
+          done
           cat > AppDir/usr/share/applications/yap.desktop << EOF
           [Desktop Entry]
           Name=Yap
@@ -466,10 +494,18 @@ jobs:
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           PKG_NAME="yap_${VERSION}_amd64"
-          mkdir -p "${PKG_NAME}/DEBIAN" "${PKG_NAME}/usr/bin" "${PKG_NAME}/usr/share/applications" "${PKG_NAME}/usr/share/icons/hicolor/256x256/apps"
+          mkdir -p "${PKG_NAME}/DEBIAN" "${PKG_NAME}/usr/bin" "${PKG_NAME}/usr/lib/yap" "${PKG_NAME}/usr/share/applications" "${PKG_NAME}/usr/share/icons/hicolor/256x256/apps"
           cp build/bin/yap "${PKG_NAME}/usr/bin/"
           cp /tmp/whisper.cpp/build/bin/whisper-cli "${PKG_NAME}/usr/bin/"
-          chmod +x "${PKG_NAME}/usr/bin/yap" "${PKG_NAME}/usr/bin/whisper-cli"
+          cp /tmp/whisper.cpp/build/bin/whisper-server "${PKG_NAME}/usr/bin/"
+          chmod +x "${PKG_NAME}/usr/bin/yap" "${PKG_NAME}/usr/bin/whisper-cli" "${PKG_NAME}/usr/bin/whisper-server"
+          for bin in "${PKG_NAME}/usr/bin/whisper-cli" "${PKG_NAME}/usr/bin/whisper-server"; do
+            ldd "$bin" | awk '/=> \/.*(whisper|ggml|gomp|openblas|blas)/ {print $3}' | xargs -r -I{} cp -L {} "${PKG_NAME}/usr/lib/yap/"
+            patchelf --set-rpath '$ORIGIN/../lib/yap' "$bin"
+          done
+          for lib in "${PKG_NAME}/usr/lib/yap"/*; do
+            [ -f "$lib" ] && patchelf --set-rpath '$ORIGIN' "$lib" || true
+          done
           cp build/appicon.iconset/icon_256x256.png "${PKG_NAME}/usr/share/icons/hicolor/256x256/apps/yap.png"
           cat > "${PKG_NAME}/usr/share/applications/yap.desktop" << EOF
           [Desktop Entry]
@@ -545,7 +581,7 @@ jobs:
 
             Speech-to-Text Desktop App by [Applause Lab](https://applauselab.ai)
 
-            Local transcription runtime (`whisper-cli`) is bundled with release artifacts. Whisper model files are still downloaded on first setup into the user's Yap data directory.
+            Local transcription runtimes (`whisper-server` with `whisper-cli` fallback) are bundled with release artifacts. Whisper model files are still downloaded on first setup into the user's Yap data directory.
 
             ### Downloads
 

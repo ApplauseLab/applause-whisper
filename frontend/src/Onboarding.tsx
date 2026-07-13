@@ -418,7 +418,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
                 <div className="model-desc">
                   {model.name === 'tiny.en' && 'Fastest option, great for quick notes and simple dictation'}
                   {model.name === 'base.en' && 'Best balance of speed and accuracy for everyday use'}
-                  {model.name === 'small.en' && 'Higher accuracy for detailed transcription, slightly slower'}
+                  {model.name === 'small.en' && 'Higher accuracy for detailed transcription, but much slower on CPU'}
                 </div>
               </div>
               {model.downloaded && (

@@ -63,6 +63,10 @@ static int requestAccessibilityPermissions(void) {
         NSLog(@"IMPORTANT: Please grant Accessibility permissions to enable hotkey features");
         NSLog(@"Go to: System Preferences > Privacy & Security > Accessibility");
         NSLog(@"Add and enable this application");
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSURL *url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
+            [[NSWorkspace sharedWorkspace] openURL:url];
+        });
     }
     return trusted;
 }
@@ -329,6 +333,10 @@ func (m *Manager) Register(cb Callback) error {
 
 	if m.running {
 		return nil
+	}
+
+	if !HasAccessibilityPermissions() {
+		return fmt.Errorf("accessibility permission not granted")
 	}
 
 	callbackMu.Lock()

@@ -176,6 +176,8 @@ func (a *App) startup(ctx context.Context) {
 	a.openaiEngine = transcribe.NewOpenAIEngine(configManager.Get().OpenAIAPIKey)
 	if err := a.validateReadyToRecord(); err != nil {
 		runtime.LogWarning(a.ctx, fmt.Sprintf("Transcription not ready: %v", err))
+	} else if configManager.Get().Provider == "local" {
+		a.prewarmLocalEngine()
 	}
 
 	// Check accessibility permissions without prompting.
@@ -228,6 +230,11 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 	if a.overlay != nil {
 		a.overlay.Destroy()
+	}
+	if a.localEngine != nil {
+		if err := a.localEngine.Close(); err != nil {
+			runtime.LogWarning(a.ctx, fmt.Sprintf("Failed to stop local transcription worker: %v", err))
+		}
 	}
 	audio.Terminate()
 	sounds.Cleanup()
@@ -614,6 +621,7 @@ func (a *App) transcribe(samples []float32, duration float64) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	transcriptionStarted := time.Now()
 
 	if config.Provider == "openai" {
 		text, err = a.openaiEngine.Transcribe(ctx, samples)
@@ -622,6 +630,12 @@ func (a *App) transcribe(samples []float32, duration float64) {
 	}
 	if err != nil {
 		runtime.LogWarning(a.ctx, fmt.Sprintf("Transcription failed: provider=%s model=%s duration=%.2fs samples=%d error=%v", config.Provider, config.Model, duration, len(samples), err))
+	} else {
+		backend := config.Provider
+		if config.Provider == "local" {
+			backend = a.localEngine.Backend()
+		}
+		runtime.LogInfo(a.ctx, fmt.Sprintf("Transcription complete: provider=%s model=%s backend=%s audioDuration=%.2fs elapsed=%s", config.Provider, config.Model, backend, duration, time.Since(transcriptionStarted).Round(time.Millisecond)))
 	}
 
 	// Generate unique ID for this recording
@@ -786,6 +800,9 @@ func (a *App) SetModel(model string) error {
 		return err
 	}
 	a.localEngine.SetModel(transcribe.Model(model))
+	if a.configManager.Get().Provider == "local" {
+		a.prewarmLocalEngine()
+	}
 	a.emitState()
 	return nil
 }
@@ -795,8 +812,30 @@ func (a *App) SetProvider(provider string) error {
 	if err := a.configManager.SetProvider(provider); err != nil {
 		return err
 	}
+	if provider == "local" {
+		a.localEngine.Open()
+		a.prewarmLocalEngine()
+	} else if a.localEngine != nil {
+		_ = a.localEngine.Close()
+	}
 	a.emitState()
 	return nil
+}
+
+func (a *App) prewarmLocalEngine() {
+	if a.localEngine == nil {
+		return
+	}
+	go func() {
+		started := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		if err := a.localEngine.Prewarm(ctx); err != nil {
+			runtime.LogWarning(a.ctx, fmt.Sprintf("Persistent Whisper prewarm failed: %v", err))
+			return
+		}
+		runtime.LogInfo(a.ctx, fmt.Sprintf("Persistent Whisper prewarm complete: backend=%s elapsed=%s", a.localEngine.Backend(), time.Since(started).Round(time.Millisecond)))
+	}()
 }
 
 // SetOpenAIKey sets the OpenAI API key
